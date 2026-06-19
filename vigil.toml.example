@@ -1,0 +1,48 @@
+# VIGIL Configuration Example
+# Copy this file to vigil.toml or /etc/vigil/vigil.toml to configure the daemon.
+
+[ingestion]
+# Maximum telemetry events processed per second.
+max_events_per_second = 1000
+# Internal channel capacity for the ingestion pipeline buffer.
+channel_capacity = 10000
+# Reject events older than this (in seconds) to prevent replay attacks.
+max_event_age_seconds = 60
+# Cryptographic HMAC verification of incoming telemetry envelopes.
+# Set to 'true' in production to enforce zero-trust ingestion.
+enforce_hmac = true
+# IP and Port to bind the VIGIL REST API and Web Dashboard.
+bind_address = "127.0.0.1:3000"
+
+[storage]
+# Path to the embedded ACID database file.
+db_path = "target/vigil.redb"
+# Maximum database size limit in bytes (1 GB default).
+max_db_size_bytes = 1073741824
+# How often to run background database compaction.
+compaction_interval_secs = 3600
+
+[detection]
+# Path to the compiled Isolation Forest model (for ML detection).
+model_path = "./models/isolation_forest.model"
+# Score threshold above which an event is flagged as anomalous (0.0 to 1.0).
+anomaly_threshold = 0.85
+# Sliding window size for statistical tracking (Z-score, IQR, etc.).
+window_size = 100
+
+[llm]
+# Path to the GGUF model file for the local AI Copilot.
+# If Ollama is used or if you want the Rule-Based Expert System, leave this path as is or point it to a non-existent file.
+model_path = "./models/qwen2.5-1.5b-instruct-q4_k_m.gguf"
+# Maximum tokens the LLM is allowed to generate per diagnostic.
+max_tokens = 512
+# Temperature for response generation (lower is more deterministic).
+temperature = 0.1
+# Number of CPU threads to allocate for local inference.
+n_threads = 4
+
+[hmac_keys]
+# Key-Value map of allowed ground station sources and their 32-byte hex HMAC keys.
+# Required if 'enforce_hmac = true'
+ground-station-1 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+ground-station-2 = "d04b98f48e8f8bcc15c6ae5ac050801cd6dcfd428fb5f9e65c4e16e7807340fa"

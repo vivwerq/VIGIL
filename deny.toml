@@ -1,0 +1,39 @@
+# VIGIL cargo-deny configuration
+# Run: cargo deny check
+# This enforces supply-chain security for all dependencies.
+
+[advisories]
+db-path = "~/.cargo/advisory-db"
+db-urls = ["https://github.com/rustsec/advisory-db"]
+vulnerability = "deny"
+unmaintained = "warn"
+yanked = "deny"
+notice = "warn"
+
+[licenses]
+unlicensed = "deny"
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "Zlib",
+]
+copyleft = "deny"
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"    # No wildcard version specs
+highlight = "all"
+
+# Deny known-problematic crates
+deny = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

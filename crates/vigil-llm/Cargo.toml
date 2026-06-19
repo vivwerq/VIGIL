@@ -1,0 +1,20 @@
+[package]
+name = "vigil-llm"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "LLM copilot interface for VIGIL (Phase 3) — offline diagnostics and remediation generation"
+
+[dependencies]
+vigil-core = { path = "../vigil-core" }
+vigil-detect = { path = "../vigil-detect" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+regex = { workspace = true }
+
+
+[dev-dependencies]

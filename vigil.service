@@ -1,0 +1,30 @@
+[Unit]
+Description=VIGIL — Air-Gapped Predictive AI NOC Copilot (xcomrade.tech Edition)
+After=network.target
+
+[Service]
+Type=simple
+User=vigil-daemon
+Group=vigil-daemon
+WorkingDirectory=/var/lib/vigil
+ExecStart=/usr/local/bin/vigil-daemon --mode production --bind-address 127.0.0.1:3000 --log-level info
+Restart=on-failure
+RestartSec=5s
+
+# Hardened security configurations for high-security space ground stations
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+MemoryDenyWriteExecute=no
+ReadWritePaths=/var/lib/vigil /var/log/vigil
+ReadOnlyPaths=/etc/vigil
+
+[Install]
+WantedBy=multi-user.target

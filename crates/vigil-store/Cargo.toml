@@ -1,0 +1,22 @@
+[package]
+name = "vigil-store"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Embedded database layer for VIGIL (Phase 2) — redb-backed telemetry and anomaly storage"
+
+[dependencies]
+vigil-core = { path = "../vigil-core" }
+vigil-detect = { path = "../vigil-detect" }
+redb = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+bincode = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+vigil-synth = { path = "../vigil-synth" }
+tempfile = "3.8"

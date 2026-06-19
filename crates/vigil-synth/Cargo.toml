@@ -1,0 +1,20 @@
+[package]
+name = "vigil-synth"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Synthetic MPLS/BGP/SNMP telemetry generator with anomaly injection"
+
+[dependencies]
+vigil-core = { path = "../vigil-core" }
+rand = { workspace = true }
+rand_distr = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+tracing-subscriber = { workspace = true }

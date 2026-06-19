@@ -1,0 +1,87 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/vigil-core",
+    "crates/vigil-ingest",
+    "crates/vigil-synth",
+    "crates/vigil-detect",
+    "crates/vigil-store",
+    "crates/vigil-llm",
+    "bin/vigil-daemon",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+authors = ["VIGIL Team"]
+description = "Verified Intelligent Ground-station Infrastructure Liaison — Air-Gapped Predictive AI NOC Copilot"
+
+[workspace.dependencies]
+# Async runtime — pinned for reproducibility
+tokio = { version = "1.44", features = ["full"] }
+# Serialization — the backbone of all data exchange
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+# Binary serialization for internal high-speed paths
+bincode = "1.3"
+# Logging — structured, async-aware
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+# Error handling — ergonomic, zero-cost
+thiserror = "2.0"
+anyhow = "1.0"
+# Time — no system clock trust, monotonic where possible
+chrono = { version = "0.4", features = ["serde"] }
+# UUID for unique event IDs — v7 for time-ordered
+uuid = { version = "1.0", features = ["v7", "serde"] }
+# Cryptographic HMAC verification
+hmac = "0.12"
+sha2 = "0.10"
+# Embedded ACID database — pure Rust, no external deps
+redb = "2.4"
+# Random number generation for synthetic data
+rand = "0.9"
+rand_distr = "0.5"
+# CLI argument parsing
+clap = { version = "4.5", features = ["derive"] }
+# Bounded channels for backpressure
+async-channel = "2.3"
+# IP address handling
+ipnet = { version = "2.10", features = ["serde"] }
+# Byte size limits for untrusted input
+bytes = "1.9"
+# Regular expressions for zero-trust log/LLM sanitization
+regex = "1.10"
+# Unsupervised machine learning framework
+linfa = { version = "0.7.0", default-features = false }
+# N-dimensional arrays for linfa input formatting
+ndarray = "0.15"
+# TOML configuration file parsing
+toml = "0.8"
+
+
+
+
+# Workspace-wide profile: hardened release builds
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"           # No unwinding in production — fail fast
+strip = "symbols"         # Reduce binary size
+overflow-checks = true    # Arithmetic overflow is a security bug
+
+[profile.dev]
+opt-level = 0
+overflow-checks = true    # Always check overflow, even in dev
+
+# Workspace-wide lint policy
+[workspace.lints.rust]
+unsafe_code = "deny"      # Zero unsafe — memory safety is non-negotiable
+
+[workspace.lints.clippy]
+# Security-relevant lints — must not be ignored
+unwrap_used = "warn"
+expect_used = "warn"

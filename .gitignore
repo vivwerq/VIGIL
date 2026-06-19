@@ -1,0 +1,24 @@
+# Build artifacts
+/target/
+**/*.redb
+
+# IDE / Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Nix
+/result
+/.direnv/
+
+# Logs
+*.log
+
+# Models (large binary files — download separately)
+models/*.gguf

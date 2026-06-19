@@ -1,0 +1,28 @@
+[package]
+name = "vigil-daemon"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "VIGIL main daemon process"
+
+[dependencies]
+vigil-core = { path = "../../crates/vigil-core" }
+vigil-ingest = { path = "../../crates/vigil-ingest" }
+vigil-synth = { path = "../../crates/vigil-synth" }
+vigil-detect = { path = "../../crates/vigil-detect" }
+vigil-store = { path = "../../crates/vigil-store" }
+vigil-llm = { path = "../../crates/vigil-llm" }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+clap = { workspace = true }
+serde_json = { workspace = true }
+serde = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+anyhow = { workspace = true }
+tempfile = "3.8"
+axum = "0.8.9"
+tower-http = "0.6.11"
+rand = { workspace = true }
+toml = { workspace = true }

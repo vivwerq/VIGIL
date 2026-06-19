@@ -1,0 +1,29 @@
+# VIGIL Cargo Configuration — Hardened Build Flags
+# These flags apply to ALL builds in this workspace.
+
+[build]
+# Use mold linker if available for faster builds (dev), lld as fallback
+# Uncomment the appropriate linker for your system:
+# rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+
+[target.x86_64-unknown-linux-gnu]
+rustflags = [
+    # Stack protector — mitigates stack buffer overflows
+    "-C", "force-frame-pointers=yes",
+    # Fortify source equivalent for Rust
+    "-D", "unsafe_code",          # Deny unsafe by default — opt-in per module
+    "-W", "clippy::pedantic",
+    "-W", "clippy::nursery",
+]
+
+[env]
+# Ensure no accidental network access during builds
+# CARGO_HTTP_CHECK_REVOKE = "false"
+
+[net]
+# For air-gapped environments: disable all network access
+# offline = true  # Uncomment in production air-gapped deployments
+
+[registries]
+# No external registries in air-gapped mode
+# All dependencies must be vendored

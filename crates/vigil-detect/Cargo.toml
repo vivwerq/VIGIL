@@ -1,0 +1,22 @@
+[package]
+name = "vigil-detect"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Statistical anomaly detection engine for VIGIL — Z-score, IQR, sliding window baselines"
+
+[dependencies]
+vigil-core = { path = "../vigil-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+tracing = { workspace = true }
+linfa = { workspace = true }
+ndarray = { workspace = true }
+
+
+
+[dev-dependencies]
+tokio = { workspace = true }
+vigil-synth = { path = "../vigil-synth" }
