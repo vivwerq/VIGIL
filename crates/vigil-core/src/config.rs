@@ -113,6 +113,7 @@ impl Default for VigilConfig {
             },
             llm: LlmConfig {
                 model_path: PathBuf::from("/var/lib/vigil/models/mistral-7b-q4.gguf"),
+                bin_path: None,
                 max_tokens: 512,
                 temperature: 0.1,
                 n_threads: 4,
