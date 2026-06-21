@@ -132,7 +132,7 @@ switch ($choice) {
             $modelName = "Qwen2.5-1.5B-Instruct-Q4_K_M.gguf"
             $url = "https://huggingface.co/bartowski/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf"
         }
-        $ChosenModelPath = "./models/$modelName"
+        $ChosenModelPath = ".\models\$modelName"
         
         if (!(Test-Path $ChosenModelPath)) {
             Write-Host "[*] Downloading $modelName..." -ForegroundColor Cyan
@@ -140,6 +140,17 @@ switch ($choice) {
             Write-Host "[+] Download complete." -ForegroundColor Green
         } else {
             Write-Host "[+] Model already exists at $ChosenModelPath" -ForegroundColor Green
+        }
+        
+        if (!(Get-Command llama-cli -ErrorAction SilentlyContinue)) {
+            Write-Host "[*] llama-cli not found in PATH. Downloading pre-compiled llama.cpp for Windows..." -ForegroundColor Cyan
+            if (!(Test-Path ".\bin")) { New-Item -ItemType Directory -Force -Path ".\bin" | Out-Null }
+            $llamaZip = ".\bin\llama-bin.zip"
+            Invoke-WebRequest -Uri "https://github.com/ggerganov/llama.cpp/releases/download/b3130/llama-b3130-bin-win-avx2-x64.zip" -OutFile $llamaZip
+            Expand-Archive -Path $llamaZip -DestinationPath ".\bin\llama-bin" -Force
+            Remove-Item $llamaZip -Force
+            $LLM_BIN_PATH_TOML = "./bin/llama-bin/llama-cli.exe"
+            Write-Host "[+] Extracted llama-cli to $LLM_BIN_PATH_TOML" -ForegroundColor Green
         }
     }
 }
@@ -158,6 +169,10 @@ if (Test-Path $ConfigPath) {
 
 # Fix backslashes to forward slashes for TOML
 $ChosenModelPathToml = $ChosenModelPath.Replace("\", "/")
+$BinPathConfig = ""
+if ($LLM_BIN_PATH_TOML) {
+    $BinPathConfig = "bin_path = `"$LLM_BIN_PATH_TOML`""
+}
 
 if ($ShouldWrite) {
     $toml = @"
@@ -180,6 +195,7 @@ window_size = 100
 
 [llm]
 model_path = "$ChosenModelPathToml"
+$BinPathConfig
 max_tokens = 512
 temperature = 0.1
 n_threads = 4

@@ -34,6 +34,8 @@ window_size = 100
 # Path to the GGUF model file for the local AI Copilot.
 # If Ollama is used or if you want the Rule-Based Expert System, leave this path as is or point it to a non-existent file.
 model_path = "./models/qwen2.5-1.5b-instruct-q4_k_m.gguf"
+# Optional: Path to the llama-cli binary if it is not in the system PATH.
+bin_path = "./bin/llama-bin/llama-cli"
 # Maximum tokens the LLM is allowed to generate per diagnostic.
 max_tokens = 512
 # Temperature for response generation (lower is more deterministic).

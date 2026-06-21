@@ -238,6 +238,27 @@ case "$llm_choice" in
                 exit 1
             fi
         fi
+        
+        if ! command -v llama-cli >/dev/null 2>&1; then
+            info "llama-cli not found in PATH. Downloading pre-compiled llama.cpp for Linux..."
+            mkdir -p ./bin
+            LLAMA_ZIP="./bin/llama-bin.zip"
+            if command -v curl >/dev/null; then
+                curl -L --progress-bar -o "$LLAMA_ZIP" "https://github.com/ggerganov/llama.cpp/releases/download/b3130/llama-b3130-bin-ubuntu-x64.zip"
+            else
+                wget --show-progress -q -O "$LLAMA_ZIP" "https://github.com/ggerganov/llama.cpp/releases/download/b3130/llama-b3130-bin-ubuntu-x64.zip"
+            fi
+            
+            if command -v unzip >/dev/null 2>&1; then
+                unzip -q -o "$LLAMA_ZIP" -d ./bin/llama-bin
+                rm -f "$LLAMA_ZIP"
+                chmod +x ./bin/llama-bin/llama-cli
+                LLM_BIN_PATH_TOML="./bin/llama-bin/llama-cli"
+                ok "Extracted llama-cli to $LLM_BIN_PATH_TOML"
+            else
+                warn "unzip is not installed. Skipping automatic extraction of llama-cli."
+            fi
+        fi
         ;;
 esac
 
@@ -257,6 +278,11 @@ if [ -f "$CONFIG_PATH" ]; then
         SHOULD_WRITE=false
         info "Keeping existing vigil.toml"
     fi
+fi
+
+BIN_PATH_CONFIG=""
+if [ -n "${LLM_BIN_PATH_TOML:-}" ]; then
+    BIN_PATH_CONFIG="bin_path = \"${LLM_BIN_PATH_TOML}\""
 fi
 
 if [ "$SHOULD_WRITE" = true ]; then
@@ -283,6 +309,7 @@ window_size = 100
 
 [llm]
 model_path = "${CHOSEN_MODEL_PATH}"
+${BIN_PATH_CONFIG}
 max_tokens = 512
 temperature = 0.1
 n_threads = 4

@@ -69,6 +69,8 @@ pub struct DetectionConfig {
 pub struct LlmConfig {
     /// Path to the GGUF model file.
     pub model_path: PathBuf,
+    /// Path to the inference binary (e.g., llama-cli).
+    pub bin_path: Option<String>,
     /// Maximum tokens to generate per response.
     pub max_tokens: usize,
     /// Temperature for generation (0.0 = deterministic).
@@ -81,6 +83,7 @@ impl Default for LlmConfig {
     fn default() -> Self {
         Self {
             model_path: PathBuf::from("/var/lib/vigil/models/mistral-7b-q4.gguf"),
+            bin_path: None,
             max_tokens: 512,
             temperature: 0.1,
             n_threads: 4,

@@ -142,13 +142,13 @@ impl LlmCopilot {
         // 1. Check for a real GGUF model file on disk
         if config.model_path.exists() && config.model_path.extension().map(|e| e == "gguf").unwrap_or(false) {
             // Also verify llama-cli is available
-            let binary = std::env::var("VIGIL_LLM_BIN").unwrap_or_else(|_| "llama-cli".to_string());
-            if which_exists(&binary) {
+            let binary = config.bin_path.clone().unwrap_or_else(|| std::env::var("VIGIL_LLM_BIN").unwrap_or_else(|_| "llama-cli".to_string()));
+            if which_exists(&binary) || std::path::Path::new(&binary).exists() {
                 return InferenceBackend::LlamaCpp;
             }
             // GGUF exists but no llama-cli — warn and continue
             warn!(
-                "GGUF model found at {:?} but '{}' binary not in PATH. Checking Ollama...",
+                "GGUF model found at {:?} but '{}' binary not in PATH or not found. Checking Ollama...",
                 config.model_path, binary
             );
         }
@@ -194,7 +194,7 @@ impl LlmCopilot {
 
         // 1. Attempt local llama.cpp FFI/CLI subprocess execution
         if self.config.model_path.exists() {
-            let binary = std::env::var("VIGIL_LLM_BIN").unwrap_or_else(|_| "llama-cli".to_string());
+            let binary = self.config.bin_path.clone().unwrap_or_else(|| std::env::var("VIGIL_LLM_BIN").unwrap_or_else(|_| "llama-cli".to_string()));
             info!(
                 "Attempting local llama.cpp inference using binary '{}' and model '{:?}'",
                 binary, self.config.model_path
