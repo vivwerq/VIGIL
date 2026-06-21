@@ -766,6 +766,7 @@ mod tests {
 
         let copilot = LlmCopilot::new(LlmConfig {
             model_path: std::path::PathBuf::from("/nonexistent/model.gguf"),
+            bin_path: None,
             max_tokens: 256,
             temperature: 0.1,
             n_threads: 1,
