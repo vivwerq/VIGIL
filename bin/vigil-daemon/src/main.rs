@@ -724,6 +724,7 @@ async fn get_anomaly_report_details(
         "root_cause": copilot.root_cause,
         "recommended_action": copilot.recommended_action,
         "estimated_lead_time": copilot.estimated_lead_time,
+        "backend": format!("{}", state.copilot.backend()),
         "playbook": {
             "name": playbook.name,
             "suggested_commands": playbook.suggested_commands,

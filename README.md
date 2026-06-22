@@ -135,9 +135,9 @@ Getting VIGIL up and running on a local machine takes just a few steps:
    .\install.ps1
    ```
 2. **Setup Wizard Options**:
-   * **Choose Installation Mode**: Choose **1) Local Developer Mode** (runs completely without root, creating local configuration and model files in the workspace).
-   * **Choose LLM Model**: Option **1 (Qwen-2.5-1.5B)** is highly recommended as it is lightweight (~1.1 GB), has no licensing blocks, and downloads directly via `curl`/`wget` with a real-time progress bar.
-   * **Alternative (No-Download)**: If you want a quick zero-download setup, select **5 (Mock / Rule-Based Expert System Fallback)**.
+   * **Option 1 (Expert System)**: Zero-download, instant startup. Highly recommended for a fast and lightweight demonstration.
+   * **Option 2 (Use Ollama)**: Routes diagnostics through a local Ollama daemon. You can pull `qwen2.5:1.5b` (~1 GB), `phi3:mini` (~2.3 GB), or `mistral:7b` (~4 GB).
+   * **Option 3 (Download GGUF)**: Downloads a quantized GGUF model (`Qwen2.5-1.5B-Instruct` or `Phi-3.5-mini-instruct`) directly from Hugging Face and downloads/configures `llama-cli` to run local inference.
 3. **Start the Dashboard**:
    Once the compiler finishes building the Rust executable, launch the central daemon in synthetic simulation mode:
    ```bash

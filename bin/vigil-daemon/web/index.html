@@ -7,39 +7,44 @@
     <link rel="stylesheet" href="/dashboard.css">
 </head>
 <body>
+    <!-- Top Level Warning Banner (Sticky Alert) -->
+    <div id="fallback-banner" class="fallback-warning-banner" style="display: none;">
+        <span>CRITICAL SYSTEM WARNING: PRIMARY AI BACKEND OFFLINE — DETECTING VIA LOCAL DETERMINISTIC EXPERT SYSTEM</span>
+    </div>
+
     <header class="noc-header">
         <div class="logo-area">
             <div class="logo-text">
                 <h1>VIGIL</h1>
-                <span class="sub-logo">xcomrade.tech // SECURE AIR-GAPPED NOC COPILOT</span>
+                <span class="sub-logo">ISRO GROUND STATION NOC COPILOT // AIR-GAPPED prediction & MITIGATION</span>
             </div>
         </div>
         
         <div class="status-summary">
             <div class="summary-item">SYSTEM STATUS: <span id="system-status-badge" class="sys-status-badge normal">NORMAL</span></div>
-            <div class="summary-item">ACTIVE DEVICES: <strong id="connected-devices-count">0</strong></div>
+            <div class="summary-item">ACTIVE DEVICES: <strong id="connected-devices-count">4</strong></div>
             <div class="summary-item">LAST UPDATE: <strong id="last-updated-time">N/A</strong></div>
         </div>
 
         <div class="header-right">
             <div class="scenario-selector-container">
-                <span class="scenario-label">SIMULATION MODE:</span>
+                <span class="scenario-label">SIMULATION SCENARIO:</span>
                 <select id="scenario-select" class="scenario-select">
-                    <option value="normal">Normal Operations</option>
-                    <option value="congestion-buildup">Progressive Congestion Buildup</option>
-                    <option value="degraded-optics">Degraded Transceiver Optics</option>
-                    <option value="fiber-cut">Simulate Fiber Cut</option>
-                    <option value="route-leak">BGP Route Leak</option>
-                    <option value="security-incident">Security Incident (SNMP Burst)</option>
+                    <option value="normal">NORMAL OPERATIONS</option>
+                    <option value="congestion-buildup">PROGRESSIVE CONGESTION BUILDUP</option>
+                    <option value="degraded-optics">DEGRADED TRANSCEIVER OPTICS</option>
+                    <option value="fiber-cut">FIBER OPTIC PATH CUT</option>
+                    <option value="route-leak">BGP ROUTE LEAK</option>
+                    <option value="security-incident">SECURITY INCIDENT (SNMP BURST)</option>
                 </select>
             </div>
         </div>
     </header>
 
     <main class="dashboard-grid">
-        <!-- 6 Metrics Cards Grid -->
+        <!-- 6 Metrics Cards Grid (Tappable for full history charts) -->
         <section class="metrics-row">
-            <div class="metric-card" id="metric-latency">
+            <div class="metric-card clickable" id="metric-latency" onclick="openMetricModal('latency', 'PATH LATENCY')">
                 <div class="metric-info">
                     <span class="metric-title">PATH LATENCY</span>
                     <span class="metric-value" id="val-latency">0.0 ms</span>
@@ -48,9 +53,10 @@
                 <div class="chart-container">
                     <canvas id="chart-latency"></canvas>
                 </div>
+                <div class="metric-tap-hint">EXPAND TIME-SERIES</div>
             </div>
 
-            <div class="metric-card" id="metric-loss">
+            <div class="metric-card clickable" id="metric-loss" onclick="openMetricModal('loss', 'PACKET LOSS')">
                 <div class="metric-info">
                     <span class="metric-title">PACKET LOSS</span>
                     <span class="metric-value" id="val-loss">0.00 %</span>
@@ -59,9 +65,10 @@
                 <div class="chart-container">
                     <canvas id="chart-loss"></canvas>
                 </div>
+                <div class="metric-tap-hint">EXPAND TIME-SERIES</div>
             </div>
             
-            <div class="metric-card" id="metric-bandwidth">
+            <div class="metric-card clickable" id="metric-bandwidth" onclick="openMetricModal('bandwidth', 'LINK UTILIZATION')">
                 <div class="metric-info">
                     <span class="metric-title">LINK UTILIZATION</span>
                     <span class="metric-value" id="val-bandwidth">0.0 %</span>
@@ -70,9 +77,10 @@
                 <div class="chart-container">
                     <canvas id="chart-bandwidth"></canvas>
                 </div>
+                <div class="metric-tap-hint">EXPAND TIME-SERIES</div>
             </div>
 
-            <div class="metric-card" id="metric-prefixes">
+            <div class="metric-card clickable" id="metric-prefixes" onclick="openMetricModal('prefixes', 'BGP PREFIXES')">
                 <div class="metric-info">
                     <span class="metric-title">BGP PREFIXES</span>
                     <span class="metric-value" id="val-prefixes">0</span>
@@ -81,9 +89,10 @@
                 <div class="chart-container">
                     <canvas id="chart-prefixes"></canvas>
                 </div>
+                <div class="metric-tap-hint">EXPAND TIME-SERIES</div>
             </div>
 
-            <div class="metric-card" id="metric-lsps">
+            <div class="metric-card clickable" id="metric-lsps" onclick="openMetricModal('lsps', 'ACTIVE LSPs')">
                 <div class="metric-info">
                     <span class="metric-title">ACTIVE LSPs</span>
                     <span class="metric-value" id="val-lsps">0</span>
@@ -92,9 +101,10 @@
                 <div class="chart-container">
                     <canvas id="chart-lsps"></canvas>
                 </div>
+                <div class="metric-tap-hint">EXPAND TIME-SERIES</div>
             </div>
 
-            <div class="metric-card" id="metric-errors">
+            <div class="metric-card clickable" id="metric-errors" onclick="openMetricModal('errors', 'CRC ERRORS')">
                 <div class="metric-info">
                     <span class="metric-title">CRC ERRORS</span>
                     <span class="metric-value" id="val-errors">0</span>
@@ -103,6 +113,7 @@
                 <div class="chart-container">
                     <canvas id="chart-errors"></canvas>
                 </div>
+                <div class="metric-tap-hint">EXPAND TIME-SERIES</div>
             </div>
         </section>
 
@@ -115,7 +126,7 @@
                     <span class="anomaly-count-badge zero" id="anomaly-badge">0 ACTIVE</span>
                 </div>
                 <div class="console-content scrollable" id="anomalies-list">
-                    <div class="console-placeholder">No active anomalies detected. system secure.</div>
+                    <div class="console-placeholder">NO ACTIVE ANOMALIES DETECTED. GROUND SYSTEM SECURE.</div>
                 </div>
             </section>
 
@@ -128,7 +139,7 @@
                 <div class="console-content scrollable" id="diagnostics-hud">
                     <div class="hud-placeholder">
                         <div class="hud-logo-watermark">VIGIL</div>
-                        <p>Select an anomaly from the left panel to review local LLM network diagnostics, root-cause assessment, and zero-trust sanitized mitigation actions.</p>
+                        <p>SELECT AN ANOMALY FROM THE LEFT PANEL TO REVIEW SECURE LOCAL CO-PILOT ANALYSIS, ROOT-CAUSE DIAGNOSIS, AND ZERO-TRUST REMEDIATION PLAYBOOKS.</p>
                     </div>
                 </div>
             </section>
@@ -156,7 +167,7 @@
                         </tr>
                     </thead>
                     <tbody id="event-log-body">
-                        <!-- Filled in dynamically -->
+                        <!-- Skeletons loaded on start -->
                     </tbody>
                 </table>
             </div>
@@ -164,8 +175,8 @@
     </main>
 
     <footer class="noc-footer">
-        <span>Bharatiya Antariksh Hackathon 2026 // Challenge 13 // Ground-station Network Resilience</span>
-        <span id="system-time">UTC: 2026-06-15 00:00:00</span>
+        <span>BHARATIYA ANTARIKSH HACKATHON 2026 // CHALLENGE 13 // GROUND-STATION NETWORK RESILIENCE</span>
+        <span id="system-time">UTC: 2026-06-22 00:00:00</span>
     </footer>
 
     <!-- Diagnostics Modal Overlay -->
@@ -199,6 +210,13 @@
                     </div>
                 </div>
 
+                <!-- AI System Inference Mode Alert -->
+                <div id="modal-inference-badge-container" style="margin-bottom: 20px; display: none;">
+                    <div class="inference-system-badge" id="modal-inference-badge">
+                        ACTIVE DIANOSTIC BACKEND: Local GGUF (llama.cpp)
+                    </div>
+                </div>
+
                 <!-- Root Cause Analysis -->
                 <div class="modal-section">
                     <div class="modal-section-title">ROOT CAUSE HYPOTHESIS</div>
@@ -212,6 +230,14 @@
                     <div class="modal-section-title">DETAILED TECHNICAL EXPLANATION</div>
                     <div class="modal-section-body" id="modal-reasoning">
                         Waiting for expert reasoning...
+                    </div>
+                </div>
+
+                <!-- Affected Components -->
+                <div class="modal-section">
+                    <div class="modal-section-title">AFFECTED COMPONENTS & PATHWAYS</div>
+                    <div class="modal-section-body" id="modal-affected-components">
+                        Analyzing topology impact...
                     </div>
                 </div>
 
@@ -236,6 +262,64 @@
             <div class="modal-footer">
                 <button class="btn-modal-action btn-modal-resolve" id="modal-resolve-btn">MARK AS RESOLVED</button>
                 <button class="btn-modal-action btn-modal-export" id="modal-export-btn">EXPORT AUDIT REPORT</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Metric Detailed History Modal -->
+    <div id="metric-detail-modal" class="modal-overlay">
+        <div class="modal-container" style="max-width: 850px; height: 75vh;">
+            <div class="modal-header">
+                <div class="modal-title-area">
+                    <span class="modal-priority-badge severity-info" id="metric-modal-badge">HISTORICAL DATA</span>
+                    <h2 id="metric-modal-title">METRIC TIME-SERIES ANALYSIS</h2>
+                </div>
+                <button class="modal-close-btn" id="metric-modal-close-btn">&times;</button>
+            </div>
+            <div class="modal-content scrollable" style="display: flex; flex-direction: column; gap: 15px;">
+                <div class="modal-summary-grid" style="grid-template-columns: repeat(3, 1fr); margin-bottom: 0;">
+                    <div class="modal-summary-item">
+                        <span class="summary-label">CURRENT TELEMETRY VALUE</span>
+                        <strong id="metric-modal-current">-</strong>
+                    </div>
+                    <div class="modal-summary-item">
+                        <span class="summary-label">MAX VALUE OBSERVED</span>
+                        <strong id="metric-modal-max">-</strong>
+                    </div>
+                    <div class="modal-summary-item">
+                        <span class="summary-label">MIN VALUE OBSERVED</span>
+                        <strong id="metric-modal-min">-</strong>
+                    </div>
+                </div>
+                
+                <div class="detailed-chart-container" style="flex: 1; min-height: 250px; background: rgba(0, 0, 0, 0.3); border: 1px solid var(--border-color); border-radius: 4px; padding: 15px; position: relative;">
+                    <canvas id="metric-detail-canvas"></canvas>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-modal-action btn-modal-export" id="metric-modal-close-btn-bottom">CLOSE VIEW</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Connection Lost Overlay -->
+    <div id="offline-overlay" class="modal-overlay" style="z-index: 2000;">
+        <div class="modal-container" style="max-width: 480px; height: auto; border-color: var(--color-critical); box-shadow: 0 20px 50px rgba(0, 0, 0, 0.8), 0 0 40px rgba(185, 28, 28, 0.15);">
+            <div class="modal-header" style="border-bottom-color: var(--color-critical); background: rgba(185, 28, 28, 0.05);">
+                <div class="modal-title-area">
+                    <span class="modal-priority-badge severity-critical" style="background: rgba(185, 28, 28, 0.1); border-color: var(--color-critical); color: var(--color-critical);">CONNECTION LOST</span>
+                    <h2>MISSION CONTROL OFFLINE</h2>
+                </div>
+            </div>
+            <div class="modal-content" style="text-align: center; padding: 30px 20px; font-family: var(--font-mono); font-size: 11px;">
+                <p style="color: var(--text-primary); font-weight: bold; margin-bottom: 12px; font-size: 13px; letter-spacing: 1px;">WARNING: TELEMETRY STREAM DISRUPTED</p>
+                <p style="color: var(--text-secondary); line-height: 1.6; margin-bottom: 20px;">
+                    Attempting to re-establish connection to local VIGIL daemon at the ground station.
+                </p>
+                <div style="display: flex; justify-content: center; align-items: center; gap: 8px; color: var(--color-amber);">
+                    <div class="spinner-icon"></div>
+                    <span>RECONNECTING...</span>
+                </div>
             </div>
         </div>
     </div>

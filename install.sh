@@ -242,11 +242,15 @@ case "$llm_choice" in
 esac
 
 # If the chosen model is a GGUF file, ensure we have the llama-cli runner.
+LLM_BIN_PATH_TOML=""
 if [[ "$CHOSEN_MODEL_PATH" == *.gguf ]]; then
-    if ! command -v llama-cli >/dev/null 2>&1 && [ ! -f "./bin/llama-bin/llama-cli" ]; then
+    if [ -n "$VIGIL_LLM_BIN" ] && [ -f "$VIGIL_LLM_BIN" ]; then
+        LLM_BIN_PATH_TOML="$VIGIL_LLM_BIN"
+        ok "Using custom llama-cli from env VIGIL_LLM_BIN: $LLM_BIN_PATH_TOML"
+    elif ! command -v llama-cli >/dev/null 2>&1 && [ ! -f "./bin/llama-bin/llama-cli" ]; then
         info "llama-cli not found in PATH or bin folder. Downloading pre-compiled llama.cpp for Linux..."
         mkdir -p ./bin
-        LLAMA_ZIP="./bin/llama-bin.zip"
+        LLAMA_ZIP="./bin/llama-zip.zip"
         if command -v curl >/dev/null; then
             curl -L --progress-bar -o "$LLAMA_ZIP" "https://github.com/ggerganov/llama.cpp/releases/download/b3130/llama-b3130-bin-ubuntu-x64.zip"
         else

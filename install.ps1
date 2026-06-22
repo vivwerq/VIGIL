@@ -145,8 +145,12 @@ switch ($choice) {
 }
 
 # If the chosen model is a GGUF file, ensure we have the llama-cli runner.
+$LLM_BIN_PATH_TOML = ""
 if ($ChosenModelPath -like "*.gguf") {
-    if (!(Get-Command llama-cli -ErrorAction SilentlyContinue) -and !(Test-Path ".\bin\llama-bin\llama-cli.exe")) {
+    if ($env:VIGIL_LLM_BIN -and (Test-Path $env:VIGIL_LLM_BIN)) {
+        $LLM_BIN_PATH_TOML = $env:VIGIL_LLM_BIN.Replace("\", "/")
+        Write-Host "[+] Using custom llama-cli from env VIGIL_LLM_BIN: $LLM_BIN_PATH_TOML" -ForegroundColor Green
+    } elseif (!(Get-Command llama-cli -ErrorAction SilentlyContinue) -and !(Test-Path ".\bin\llama-bin\llama-cli.exe")) {
         Write-Host "[*] llama-cli not found in PATH or bin folder. Downloading pre-compiled llama.cpp for Windows..." -ForegroundColor Cyan
         if (!(Test-Path ".\bin")) { New-Item -ItemType Directory -Force -Path ".\bin" | Out-Null }
         $llamaZip = ".\bin\llama-bin.zip"

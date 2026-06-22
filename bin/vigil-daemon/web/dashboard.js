@@ -55,7 +55,7 @@ class Sparkline {
         
         if (this.data.length < 2) return;
         
-        ctx.strokeStyle = 'rgba(26, 39, 54, 0.4)';
+        ctx.strokeStyle = 'rgba(28, 37, 38, 0.4)';
         ctx.lineWidth = 1;
         for (let i = 1; i < 4; i++) {
             const y = (h / 4) * i;
@@ -109,15 +109,31 @@ let currentScenario = 'normal';
 let lastChartHash = '';
 let resolvedAnomalies = new Set();
 let loadedReports = {};
+let connectionFailures = 0;
+let isOffline = false;
+
+// Metric detailed modal configuration
+let selectedMetricKey = null;
+let selectedMetricTitle = "";
+
+// Keep historical data points (up to 100 samples) for expanded time-series view
+const metricHistory = {
+    latency: [],
+    loss: [],
+    bandwidth: [],
+    prefixes: [],
+    lsps: [],
+    errors: []
+};
 
 // Instantiate Sparkline Charts (Teal for stats, Amber/Red for critical/warning)
 const charts = {
-    latency: new Sparkline('chart-latency', 'rgba(0, 168, 181, 1)'),
-    loss: new Sparkline('chart-loss', 'rgba(217, 119, 6, 1)', 100),
-    bandwidth: new Sparkline('chart-bandwidth', 'rgba(0, 168, 181, 1)', 100),
-    prefixes: new Sparkline('chart-prefixes', 'rgba(0, 168, 181, 1)'),
-    lsps: new Sparkline('chart-lsps', 'rgba(0, 168, 181, 1)'),
-    errors: new Sparkline('chart-errors', 'rgba(217, 119, 6, 1)')
+    latency: new Sparkline('chart-latency', 'rgba(0, 191, 165, 1)'),
+    loss: new Sparkline('chart-loss', 'rgba(255, 179, 0, 1)', 100),
+    bandwidth: new Sparkline('chart-bandwidth', 'rgba(0, 191, 165, 1)', 100),
+    prefixes: new Sparkline('chart-prefixes', 'rgba(0, 191, 165, 1)'),
+    lsps: new Sparkline('chart-lsps', 'rgba(0, 191, 165, 1)'),
+    errors: new Sparkline('chart-errors', 'rgba(255, 179, 0, 1)')
 };
 
 // --- Format Utilities ---
@@ -130,7 +146,7 @@ function formatTime(isoStr) {
 
 function formatUuid(uuid) {
     if (!uuid) return '';
-    return uuid.substring(0, 8) + '…';
+    return uuid.substring(0, 8) + '...';
 }
 
 function clamp(val, min, max) {
@@ -182,16 +198,20 @@ async function openAnomalyModal(id) {
     
     modal.classList.add('active');
     
-    // Set placeholder loading states
+    // Set placeholder skeleton loading states
     document.getElementById('modal-title').innerText = `DIAGNOSING EVENT ${formatUuid(id).toUpperCase()}`;
-    document.getElementById('modal-issue').innerText = 'Loading...';
-    document.getElementById('modal-confidence').innerText = 'Loading...';
-    document.getElementById('modal-impact-time').innerText = 'Loading...';
-    document.getElementById('modal-severity-val').innerText = 'Loading...';
-    document.getElementById('modal-root-cause').innerText = 'Loading analysis from local LLM...';
-    document.getElementById('modal-reasoning').innerText = 'Generating details...';
-    document.getElementById('modal-playbook-commands').innerHTML = '<p style="color: var(--text-muted);">Fetching playbook...</p>';
-    document.getElementById('modal-action-plan').innerHTML = '<p style="color: var(--text-muted);">Fetching plan...</p>';
+    document.getElementById('modal-issue').innerHTML = '<div class="skeleton-box" style="width: 120px;"></div>';
+    document.getElementById('modal-confidence').innerHTML = '<div class="skeleton-box" style="width: 40px;"></div>';
+    document.getElementById('modal-impact-time').innerHTML = '<div class="skeleton-box" style="width: 80px;"></div>';
+    document.getElementById('modal-severity-val').innerHTML = '<div class="skeleton-box" style="width: 60px;"></div>';
+    document.getElementById('modal-root-cause').innerHTML = '<div class="skeleton-box skeleton-text"></div><div class="skeleton-box skeleton-text short"></div>';
+    document.getElementById('modal-reasoning').innerHTML = '<div class="skeleton-box skeleton-text"></div><div class="skeleton-box skeleton-text"></div><div class="skeleton-box skeleton-text short"></div>';
+    document.getElementById('modal-affected-components').innerHTML = '<div class="skeleton-box skeleton-text short"></div>';
+    document.getElementById('modal-playbook-commands').innerHTML = '<div class="skeleton-box skeleton-text"></div>';
+    document.getElementById('modal-action-plan').innerHTML = '<div class="skeleton-box skeleton-text"></div>';
+
+    // Hide inference badge initially during load
+    document.getElementById('modal-inference-badge-container').style.display = 'none';
 
     // Set buttons disabled state during fetch
     const resolveBtn = document.getElementById('modal-resolve-btn');
@@ -236,13 +256,48 @@ async function openAnomalyModal(id) {
         document.getElementById('modal-root-cause').innerText = report.root_cause || report.diagnosis || 'No root cause details provided.';
         document.getElementById('modal-reasoning').innerText = report.reasoning || 'No reasoning details provided by model.';
 
+        // Inference engine active configuration detection
+        const infBadge = document.getElementById('modal-inference-badge');
+        const infContainer = document.getElementById('modal-inference-badge-container');
+        if (infBadge && infContainer) {
+            const activeBackend = report.backend || "Rule-Based Expert System (offline heuristics)";
+            infBadge.innerText = `ACTIVE DIAGNOSTIC BACKEND: ${activeBackend.toUpperCase()}`;
+            if (activeBackend.toLowerCase().includes("rule-based")) {
+                infBadge.className = "inference-system-badge";
+            } else {
+                infBadge.className = "inference-system-badge llm-active";
+            }
+            infContainer.style.display = 'block';
+        }
+
+        // Dynamically detect Affected Components based on the report data/predictions
+        const affectedCompContainer = document.getElementById('modal-affected-components');
+        if (affectedCompContainer) {
+            const issueName = (report.predicted_issue || report.diagnosis || "").toLowerCase();
+            let components = [];
+            if (issueName.includes("bgp") || issueName.includes("route")) {
+                components = ["BGP Peer Session (VIGIL-GS-LNK1)", "Border Gateway Route Table", "Core Ingestion Edge Router"];
+            } else if (issueName.includes("optical") || issueName.includes("loss") || issueName.includes("fiber")) {
+                components = ["Transceiver Optics (SFP-10G-LR)", "MPLS Path Tunnel (LSP-ISRO-EAST)", "Fiber Path Segment (FIBER-PHY-03)"];
+            } else if (issueName.includes("congestion") || issueName.includes("utilization")) {
+                components = ["Interface Queue Buffer", "Telemetry Port (ge-0/0/2)", "NOC Network Backplane"];
+            } else {
+                components = ["Edge Gateway Router", "NOC Telemetry Buffer Core"];
+            }
+            affectedCompContainer.innerHTML = `
+                <ul class="diag-mitigation-list">
+                    ${components.map(c => `<li>${escapeHtml(c)}</li>`).join('')}
+                </ul>
+            `;
+        }
+
         // Render playbooks
         const playbook = report.playbook;
         const playbookContainer = document.getElementById('modal-playbook-commands');
         if (playbookContainer) {
             if (playbook && playbook.suggested_commands && playbook.suggested_commands.length > 0) {
                 playbookContainer.innerHTML = `
-                    <p style="color: var(--text-secondary); font-size: 10px; margin-bottom: 8px;">
+                    <p style="color: var(--text-secondary); font-size: 10px; margin-bottom: 8px; font-family: var(--font-mono);">
                         <strong>RATIONALE:</strong> ${escapeHtml(playbook.reasoning)}
                     </p>
                     <div class="playbook-commands">
@@ -315,7 +370,7 @@ async function selectAnomaly(id) {
     });
 
     const hud = document.getElementById('diagnostics-hud');
-    hud.innerHTML = `<div class="console-placeholder">Loading diagnostics report for ${escapeHtml(formatUuid(id))}…</div>`;
+    hud.innerHTML = `<div class="console-placeholder">Loading diagnostics report for ${escapeHtml(formatUuid(id))}...</div>`;
 
     try {
         const res = await fetch(`/api/anomalies/${id}`);
@@ -367,9 +422,19 @@ function renderAnomalyReport(report) {
         timeToImpactHtml = `
             <div class="incident-detail-row">
                 <span class="incident-detail-label">ESTIMATED IMPACT:</span>
-                <span style="color: var(--color-ok);">STABLE / MONITORING TREND</span>
+                <span style="color: var(--color-teal); font-weight: bold;">STABLE / MONITORING TREND</span>
             </div>
         `;
+    }
+
+    const activeBackend = report.backend || "Rule-Based Expert System (offline heuristics)";
+    const fallbackBanner = document.getElementById('fallback-banner');
+    if (fallbackBanner) {
+        if (activeBackend.toLowerCase().includes("rule-based")) {
+            fallbackBanner.style.display = 'block';
+        } else {
+            fallbackBanner.style.display = 'none';
+        }
     }
 
     const summaryCardHtml = `
@@ -438,7 +503,7 @@ function renderAnomalyReport(report) {
 
             <div class="diag-section diag-meta-grid">
                 <div class="diag-meta-item"><strong>REPORT ID:</strong> ${escapeHtml(formatUuid(report.id))}</div>
-                <div class="diag-meta-item"><strong>SEVERITY:</strong> <span class="badge severity-${sevClass}">${escapeHtml(report.severity || 'INFO')}</span></div>
+                <div class="diag-meta-item"><strong>DIAGNOSTIC BACKEND:</strong> ${escapeHtml(activeBackend)}</div>
                 <div class="diag-meta-item"><strong>ANOMALY SCORE:</strong> ${scoreDisplay}</div>
                 <div class="diag-meta-item"><strong>TIMESTAMP:</strong> ${escapeHtml(formatTime(report.analyzed_at))}</div>
             </div>
@@ -462,7 +527,7 @@ function resolveAnomaly(id) {
         document.getElementById('diagnostics-hud').innerHTML = `
             <div class="hud-placeholder">
                 <div class="hud-logo-watermark">VIGIL</div>
-                <p>Select an anomaly from the left panel to review local LLM network diagnostics, root-cause assessment, and zero-trust sanitized mitigation actions.</p>
+                <p>SELECT AN ANOMALY FROM THE LEFT PANEL TO REVIEW SECURE LOCAL CO-PILOT ANALYSIS, ROOT-CAUSE DIAGNOSIS, AND ZERO-TRUST REMEDIATION PLAYBOOKS.</p>
             </div>
         `;
     }
@@ -478,12 +543,13 @@ function exportReport(id) {
     
     const text = `=========================================
 VIGIL AI NOC COPILOT REPORT
-xcomrade.tech // SECURE MPLS OPERATIONS
+xcomrade.tech // SECURE OPERATIONS
 =========================================
 REPORT ID:   ${report.id}
 TIMESTAMP:   ${formatTime(report.analyzed_at)}
 SEVERITY:    ${report.severity || 'INFO'}
 SCORE:       ${(report.score * 100).toFixed(1)}%
+DIAGNOSTIC BACKEND: ${report.backend || "Expert System fallback"}
 
 [DIAGNOSIS]
 ${report.diagnosis || 'N/A'}
@@ -498,7 +564,7 @@ ${report.impact || 'N/A'}
 ${(report.mitigation || []).map((step, idx) => `${idx + 1}. ${step}`).join('\n')}
 
 =========================================
-GENERATED LOCALLY BY SECURE AIR-GAPPED VIGIL LLM
+GENERATED LOCALLY BY SECURE AIR-GAPPED VIGIL
 `;
     
     const blob = new Blob([text], { type: 'text/plain' });
@@ -510,6 +576,7 @@ GENERATED LOCALLY BY SECURE AIR-GAPPED VIGIL LLM
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+    showStatusMessage('Report exported successfully');
 }
 
 // --- Data Fetch Loop ---
@@ -517,63 +584,71 @@ async function fetchUpdate() {
     try {
         // 1. Fetch system status
         const statusRes = await fetch('/api/status');
-        let totalAnom = 0;
-        let totalIngested = 0;
-        if (statusRes.ok) {
-            const status = await statusRes.json();
-            totalIngested = status.total_ingested;
-            totalAnom = status.total_anomalies;
-            
-            document.getElementById('stat-total-ingested').innerText = status.total_ingested;
-            document.getElementById('stat-total-anomalies').innerText = status.total_anomalies;
-        }
+        if (!statusRes.ok) throw new Error("Status endpoint error");
+        
+        const status = await statusRes.json();
+        document.getElementById('stat-total-ingested').innerText = status.total_ingested;
+        document.getElementById('stat-total-anomalies').innerText = status.total_anomalies;
 
         // 2. Fetch latest telemetry
         const telemetryRes = await fetch('/api/telemetry');
-        let telemetry = [];
-        if (telemetryRes.ok) {
-            telemetry = await telemetryRes.json();
-            
-            // Enumerate unique devices
-            const devices = new Set();
-            telemetry.forEach(env => {
-                if (env.source && env.source.hostname) {
-                    devices.add(env.source.hostname);
-                }
-            });
-            document.getElementById('connected-devices-count').innerText = devices.size || 4;
+        if (!telemetryRes.ok) throw new Error("Telemetry endpoint error");
+        
+        const telemetry = await telemetryRes.json();
+        
+        // Enumerate unique devices
+        const devices = new Set();
+        telemetry.forEach(env => {
+            if (env.source && env.source.hostname) {
+                devices.add(env.source.hostname);
+            }
+        });
+        document.getElementById('connected-devices-count').innerText = devices.size || 4;
 
-            renderTelemetryTable(telemetry);
-            updateMetricCharts(telemetry);
-        }
+        renderTelemetryTable(telemetry);
+        updateMetricCharts(telemetry);
 
         // 3. Fetch latest anomalies and filter resolved
         const anomaliesRes = await fetch('/api/anomalies');
-        if (anomaliesRes.ok) {
-            let anomalies = await anomaliesRes.json();
-            
-            // Filter resolved items
-            anomalies = anomalies.filter(anom => !resolvedAnomalies.has(anom.id));
-            
-            renderAnomaliesList(anomalies);
-            
-            // Set header system status badge
-            const statusBadge = document.getElementById('system-status-badge');
-            if (statusBadge) {
-                if (anomalies.some(anom => anom.severity === 'Critical')) {
-                    statusBadge.innerText = 'CRITICAL';
-                    statusBadge.className = 'sys-status-badge critical';
-                } else if (anomalies.length > 0) {
-                    statusBadge.innerText = 'DEGRADED';
-                    statusBadge.className = 'sys-status-badge degraded';
-                } else {
-                    statusBadge.innerText = 'NORMAL';
-                    statusBadge.className = 'sys-status-badge normal';
-                }
+        if (!anomaliesRes.ok) throw new Error("Anomalies endpoint error");
+
+        let anomalies = await anomaliesRes.json();
+        
+        // Filter resolved items
+        anomalies = anomalies.filter(anom => !resolvedAnomalies.has(anom.id));
+        
+        renderAnomaliesList(anomalies);
+        
+        // Set header system status badge
+        const statusBadge = document.getElementById('system-status-badge');
+        if (statusBadge) {
+            if (anomalies.some(anom => anom.severity === 'Critical')) {
+                statusBadge.innerText = 'CRITICAL';
+                statusBadge.className = 'sys-status-badge critical';
+            } else if (anomalies.length > 0) {
+                statusBadge.innerText = 'DEGRADED';
+                statusBadge.className = 'sys-status-badge degraded';
+            } else {
+                statusBadge.innerText = 'NORMAL';
+                statusBadge.className = 'sys-status-badge normal';
             }
         }
+
+        // Connection success: reset failure counter and hide overlay
+        connectionFailures = 0;
+        if (isOffline) {
+            isOffline = false;
+            document.getElementById('offline-overlay').classList.remove('active');
+            showStatusMessage("CONNECTION RE-ESTABLISHED");
+        }
+
     } catch (e) {
         console.error("Dashboard poll failed:", e);
+        connectionFailures++;
+        if (connectionFailures >= 2 && !isOffline) {
+            isOffline = true;
+            document.getElementById('offline-overlay').classList.add('active');
+        }
     }
 }
 
@@ -596,7 +671,7 @@ function parseEvent(env) {
         const lsp = env.event.Lsp;
         protocol = 'LSP';
         severity = lsp.packet_loss_pct > 5.0 ? 'HIGH' : (lsp.packet_loss_pct > 1.0 ? 'WARN' : 'INFO');
-        details = `${lsp.label_path || lsp.source || '?'} → ${lsp.destination || '?'}. Latency: ${(lsp.latency_us / 1000).toFixed(1)}ms. Loss: ${lsp.packet_loss_pct.toFixed(2)}%. Reroutes: ${lsp.reroute_count}`;
+        details = `${lsp.label_path || lsp.source || '?'} -> ${lsp.destination || '?'}. Latency: ${(lsp.latency_us / 1000).toFixed(1)}ms. Loss: ${lsp.packet_loss_pct.toFixed(2)}%. Reroutes: ${lsp.reroute_count}`;
     } else if (env.event.Interface) {
         const iface = env.event.Interface;
         protocol = 'IFACE';
@@ -621,7 +696,12 @@ function parseEvent(env) {
 // Render the telemetry table with color coding
 function renderTelemetryTable(events) {
     const tbody = document.getElementById('event-log-body');
-    if (!tbody || events.length === 0) return;
+    if (!tbody) return;
+
+    if (events.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: var(--text-secondary);">NO INCOMING TELEMETRY DETECTED. PIPELINE STANDBY.</td></tr>`;
+        return;
+    }
 
     tbody.innerHTML = events.map(env => {
         const { protocol, details, severity } = parseEvent(env);
@@ -638,7 +718,7 @@ function renderTelemetryTable(events) {
                 <td>${escapeHtml(env.source ? env.source.hostname : 'N/A')}</td>
                 <td><strong>${escapeHtml(protocol)}</strong></td>
                 <td><span class="badge severity-${sevClass}">${escapeHtml(severity)}</span></td>
-                <td style="font-size: 10px;">${escapeHtml(details)}</td>
+                <td style="font-size: 10px; font-family: var(--font-mono);">${escapeHtml(details)}</td>
             </tr>
         `;
     }).join('');
@@ -650,7 +730,7 @@ function renderAnomaliesList(anomalies) {
     if (!container) return;
 
     if (anomalies.length === 0) {
-        container.innerHTML = `<div class="console-placeholder">No active anomalies detected. system secure.</div>`;
+        container.innerHTML = `<div class="console-placeholder">NO ACTIVE ANOMALIES DETECTED. GROUND SYSTEM SECURE.</div>`;
         document.getElementById('anomaly-badge').innerText = '0 ACTIVE';
         document.getElementById('anomaly-badge').className = 'anomaly-count-badge zero';
         return;
@@ -685,9 +765,9 @@ function renderAnomaliesList(anomalies) {
         }
 
         return `
-            <div class="anomaly-item ${isSelected} ${isCritical}" data-id="${rep.id}" onclick="openAnomalyModal('${rep.id}')" style="cursor: pointer;">
+            <div class="anomaly-item ${isSelected} ${isCritical}" data-id="${rep.id}" onclick="openAnomalyModal('${rep.id}')">
                 <div class="anomaly-meta">
-                    <span class="badge ${priorityClass}" style="font-size: 8px; font-weight: 800; padding: 1px 4px;">${escapeHtml(priorityLabel)}</span>
+                    <span class="badge ${priorityClass}" style="font-size: 8px; font-weight: 800; padding: 1px 5px;">${escapeHtml(priorityLabel)}</span>
                     <span class="anomaly-time">${escapeHtml(formatTime(rep.analyzed_at))}</span>
                 </div>
                 <div class="anomaly-item-title">${escapeHtml(rep.explanation || 'Anomalous metric deviation detected.')}</div>
@@ -748,6 +828,8 @@ function updateMetricCharts(events) {
 
     // Compute averages and update UI sparklines
     const currentLatency = latencyCount > 0 ? totalLatency / latencyCount : 20.0;
+    metricHistory.latency.push(currentLatency);
+    if (metricHistory.latency.length > 100) metricHistory.latency.shift();
     charts.latency.push(currentLatency);
     document.getElementById('val-latency').innerText = `${currentLatency.toFixed(1)} ms`;
     
@@ -760,6 +842,8 @@ function updateMetricCharts(events) {
         latencyComp.className = 'metric-comparison normal';
     }
 
+    metricHistory.loss.push(maxLoss);
+    if (metricHistory.loss.length > 100) metricHistory.loss.shift();
     charts.loss.push(maxLoss);
     document.getElementById('val-loss').innerText = `${maxLoss.toFixed(2)} %`;
     
@@ -773,6 +857,8 @@ function updateMetricCharts(events) {
     }
 
     const currentUtil = utilCount > 0 ? totalUtil / utilCount : 50.0;
+    metricHistory.bandwidth.push(currentUtil);
+    if (metricHistory.bandwidth.length > 100) metricHistory.bandwidth.shift();
     charts.bandwidth.push(currentUtil);
     document.getElementById('val-bandwidth').innerText = `${currentUtil.toFixed(1)} %`;
     
@@ -786,6 +872,8 @@ function updateMetricCharts(events) {
     }
 
     const currentPrefixes = maxPrefixes || 1200;
+    metricHistory.prefixes.push(currentPrefixes);
+    if (metricHistory.prefixes.length > 100) metricHistory.prefixes.shift();
     charts.prefixes.push(currentPrefixes);
     document.getElementById('val-prefixes').innerText = currentPrefixes;
     
@@ -799,6 +887,8 @@ function updateMetricCharts(events) {
     }
 
     const currentLspCount = activeLspSet.size || 8;
+    metricHistory.lsps.push(currentLspCount);
+    if (metricHistory.lsps.length > 100) metricHistory.lsps.shift();
     charts.lsps.push(currentLspCount);
     document.getElementById('val-lsps').innerText = currentLspCount;
     
@@ -811,6 +901,8 @@ function updateMetricCharts(events) {
         lspComp.className = 'metric-comparison normal';
     }
 
+    metricHistory.errors.push(totalCrc);
+    if (metricHistory.errors.length > 100) metricHistory.errors.shift();
     charts.errors.push(totalCrc);
     document.getElementById('val-errors').innerText = totalCrc;
     
@@ -822,10 +914,195 @@ function updateMetricCharts(events) {
         errorComp.innerText = 'NOMINAL (0)';
         errorComp.className = 'metric-comparison normal';
     }
+
+    // Dynamic Redraw Detailed Chart if open
+    if (selectedMetricKey) {
+        const color = (selectedMetricKey === 'loss' || selectedMetricKey === 'errors') ? 'rgba(255, 179, 0, 1)' : 'rgba(0, 191, 165, 1)';
+        drawDetailedChart(selectedMetricKey, color);
+    }
+}
+
+// Open metric historical timeseries modal
+function openMetricModal(metricKey, title) {
+    selectedMetricKey = metricKey;
+    selectedMetricTitle = title;
+    
+    const modal = document.getElementById('metric-detail-modal');
+    if (!modal) return;
+    
+    modal.classList.add('active');
+    document.getElementById('metric-modal-title').innerText = `${title} - GROUND NETWORK LOGS`;
+
+    const color = (metricKey === 'loss' || metricKey === 'errors') ? 'rgba(255, 179, 0, 1)' : 'rgba(0, 191, 165, 1)';
+    setTimeout(() => {
+        drawDetailedChart(metricKey, color);
+    }, 50);
+}
+
+// Close metric modal
+function closeMetricModal() {
+    selectedMetricKey = null;
+    const modal = document.getElementById('metric-detail-modal');
+    if (modal) {
+        modal.classList.remove('active');
+    }
+}
+
+// Custom Grid Canvas Plotter for Air-Gapped Detailed Chart
+function drawDetailedChart(metricKey, color) {
+    const canvas = document.getElementById('metric-detail-canvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    
+    // Account for high-DPI displays
+    const rect = canvas.parentElement.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
+    canvas.style.width = `${rect.width}px`;
+    canvas.style.height = `${rect.height}px`;
+    ctx.scale(dpr, dpr);
+    
+    const w = rect.width;
+    const h = rect.height;
+
+    const data = metricHistory[metricKey] || [];
+    ctx.clearRect(0, 0, w, h);
+
+    if (data.length < 2) {
+        ctx.fillStyle = 'var(--text-secondary)';
+        ctx.font = '10px var(--font-mono)';
+        ctx.textAlign = 'center';
+        ctx.fillText('COLLECTING TIME-SERIES TELEMETRY SAMPLES...', w / 2, h / 2);
+        return;
+    }
+
+    const maxVal = Math.max(...data);
+    const minVal = Math.min(...data);
+    const avgVal = data.reduce((sum, v) => sum + v, 0) / data.length;
+
+    // Suffixes based on metrics type
+    let suffix = "";
+    if (metricKey === 'latency') suffix = " ms";
+    else if (metricKey === 'loss' || metricKey === 'bandwidth') suffix = " %";
+
+    document.getElementById('metric-modal-current').innerText = data[data.length - 1].toFixed(2) + suffix;
+    document.getElementById('metric-modal-max').innerText = maxVal.toFixed(2) + suffix;
+    document.getElementById('metric-modal-min').innerText = minVal.toFixed(2) + suffix;
+
+    const paddingLeft = 50;
+    const paddingRight = 20;
+    const paddingTop = 20;
+    const paddingBottom = 30;
+
+    const chartW = w - paddingLeft - paddingRight;
+    const chartH = h - paddingTop - paddingBottom;
+
+    let max = maxVal;
+    let min = minVal;
+    
+    if (metricKey === 'loss' || metricKey === 'bandwidth') {
+        max = 100.0;
+        min = 0.0;
+    } else {
+        if (max === min) max = min + 1.0;
+    }
+
+    // Gridlines drawing
+    ctx.strokeStyle = 'rgba(28, 37, 38, 0.4)';
+    ctx.lineWidth = 1;
+    ctx.fillStyle = 'rgba(148, 163, 184, 0.7)';
+    ctx.font = '9px var(--font-mono)';
+    ctx.textAlign = 'right';
+
+    const gridLines = 4;
+    for (let i = 0; i <= gridLines; i++) {
+        const yVal = min + ((max - min) / gridLines) * i;
+        const y = h - paddingBottom - (i / gridLines) * chartH;
+        
+        ctx.beginPath();
+        ctx.moveTo(paddingLeft, y);
+        ctx.lineTo(w - paddingRight, y);
+        ctx.stroke();
+
+        ctx.fillText(yVal.toFixed(1) + suffix, paddingLeft - 8, y + 3);
+    }
+
+    // Path building
+    const points = [];
+    const stepX = chartW / (data.length - 1);
+    for (let i = 0; i < data.length; i++) {
+        const val = data[i];
+        const x = paddingLeft + i * stepX;
+        const y = h - paddingBottom - ((val - min) / (max - min)) * chartH;
+        points.push({ x, y });
+    }
+
+    // Area Gradient under the path line
+    ctx.beginPath();
+    ctx.moveTo(points[0].x, h - paddingBottom);
+    for (const p of points) ctx.lineTo(p.x, p.y);
+    ctx.lineTo(points[points.length - 1].x, h - paddingBottom);
+    ctx.closePath();
+
+    const grad = ctx.createLinearGradient(0, paddingTop, 0, h - paddingBottom);
+    grad.addColorStop(0, color.replace('1)', '0.12)'));
+    grad.addColorStop(1, color.replace('1)', '0.0)'));
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    // Actual stroke line
+    ctx.beginPath();
+    ctx.moveTo(points[0].x, points[0].y);
+    for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // Node data markers
+    points.forEach((p) => {
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 2.5, 0, 2 * Math.PI);
+        ctx.fillStyle = color;
+        ctx.fill();
+        ctx.strokeStyle = 'var(--bg-card)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+    });
+
+    // Draw average line
+    const avgY = h - paddingBottom - ((avgVal - min) / (max - min)) * chartH;
+    ctx.strokeStyle = 'rgba(0, 191, 165, 0.25)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([5, 5]);
+    ctx.beginPath();
+    ctx.moveTo(paddingLeft, avgY);
+    ctx.lineTo(w - paddingRight, avgY);
+    ctx.stroke();
+    ctx.setLineDash([]);
 }
 
 // --- Initialization ---
 document.addEventListener('DOMContentLoaded', () => {
+    // Render loading skeletons in table initially
+    const tbody = document.getElementById('event-log-body');
+    if (tbody) {
+        let skeletonHtml = '';
+        for (let i = 0; i < 5; i++) {
+            skeletonHtml += `
+                <tr>
+                    <td><div class="skeleton-box" style="width: 100px;"></div></td>
+                    <td><div class="skeleton-box" style="width: 70px;"></div></td>
+                    <td><div class="skeleton-box" style="width: 80px;"></div></td>
+                    <td><div class="skeleton-box" style="width: 50px;"></div></td>
+                    <td><div class="skeleton-box" style="width: 60px;"></div></td>
+                    <td><div class="skeleton-box" style="width: 180px;"></div></td>
+                </tr>
+            `;
+        }
+        tbody.innerHTML = skeletonHtml;
+    }
+
     // Clock & Last Updated indicator
     setInterval(() => {
         const now = new Date();
@@ -847,7 +1124,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // Setup Modal Close handlers
+    // Setup Diagnostics Modal Close handlers
     const modalCloseBtn = document.getElementById('modal-close-btn');
     if (modalCloseBtn) {
         modalCloseBtn.addEventListener('click', closeAnomalyModal);
@@ -860,9 +1137,30 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     }
+
+    // Setup Metric Modal Close handlers
+    const metricModalCloseBtn = document.getElementById('metric-modal-close-btn');
+    if (metricModalCloseBtn) {
+        metricModalCloseBtn.addEventListener('click', closeMetricModal);
+    }
+    const metricModalCloseBtnBottom = document.getElementById('metric-modal-close-btn-bottom');
+    if (metricModalCloseBtnBottom) {
+        metricModalCloseBtnBottom.addEventListener('click', closeMetricModal);
+    }
+    const metricModalOverlay = document.getElementById('metric-detail-modal');
+    if (metricModalOverlay) {
+        metricModalOverlay.addEventListener('click', (e) => {
+            if (e.target === metricModalOverlay) {
+                closeMetricModal();
+            }
+        });
+    }
+
+    // Escape key bind to close all active overlays
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
             closeAnomalyModal();
+            closeMetricModal();
         }
     });
 });
