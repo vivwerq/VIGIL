@@ -318,6 +318,7 @@ ${BIN_PATH_CONFIG}
 max_tokens = 512
 temperature = 0.1
 n_threads = 4
+gpu_layers = 0
 
 [hmac_keys]
 ground-station-1 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"

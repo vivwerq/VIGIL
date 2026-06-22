@@ -77,6 +77,8 @@ pub struct LlmConfig {
     pub temperature: f32,
     /// Number of CPU threads for inference.
     pub n_threads: usize,
+    /// Number of GPU layers to offload (0 = CPU only).
+    pub gpu_layers: Option<usize>,
 }
 
 impl Default for LlmConfig {
@@ -87,6 +89,7 @@ impl Default for LlmConfig {
             max_tokens: 512,
             temperature: 0.1,
             n_threads: 4,
+            gpu_layers: Some(0),
         }
     }
 }
@@ -117,6 +120,7 @@ impl Default for VigilConfig {
                 max_tokens: 512,
                 temperature: 0.1,
                 n_threads: 4,
+                gpu_layers: Some(0),
             },
             hmac_keys: HashMap::new(),
         }

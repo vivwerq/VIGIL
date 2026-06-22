@@ -42,6 +42,8 @@ max_tokens = 512
 temperature = 0.1
 # Number of CPU threads to allocate for local inference.
 n_threads = 4
+# Number of GPU layers to offload to accelerate local inference (0 = CPU only).
+gpu_layers = 0
 
 [hmac_keys]
 # Key-Value map of allowed ground station sources and their 32-byte hex HMAC keys.

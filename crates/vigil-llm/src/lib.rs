@@ -242,6 +242,10 @@ impl LlmCopilot {
     /// Run llama-cli subprocess.
     async fn run_llama_cli(&self, binary: &str, prompt: &str) -> VigilResult<String> {
         let mut cmd = tokio::process::Command::new(binary);
+        let gpu_layers = self.config.gpu_layers.unwrap_or(0);
+        if gpu_layers == 0 {
+            cmd.env("GGML_VULKAN_DISABLE", "1");
+        }
         cmd.arg("-m")
             .arg(&self.config.model_path)
             .arg("-p")
@@ -252,6 +256,8 @@ impl LlmCopilot {
             .arg(self.config.temperature.to_string())
             .arg("-t")
             .arg(self.config.n_threads.to_string())
+            .arg("-ngl")
+            .arg(gpu_layers.to_string())
             .arg("--log-disable"); // keep stderr clean
 
         let output = cmd.output().await.map_err(|e| VigilError::LlmError {
@@ -770,6 +776,7 @@ mod tests {
             max_tokens: 256,
             temperature: 0.1,
             n_threads: 1,
+            gpu_layers: Some(0),
         });
 
         let result = copilot.analyze_anomaly(&env, &report).await.unwrap();
