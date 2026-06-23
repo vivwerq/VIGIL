@@ -309,8 +309,8 @@ pub async fn diagnose_anomaly(
 /// Check if a binary exists in the system PATH (cross-platform, no subprocess).
 fn which_exists(binary: &str) -> bool {
     if let Ok(path_var) = std::env::var("PATH") {
-        for dir in path_var.split(':') {
-            let candidate = std::path::Path::new(dir).join(binary);
+        for dir in std::env::split_paths(&path_var) {
+            let candidate = dir.join(binary);
             if candidate.exists() {
                 return true;
             }

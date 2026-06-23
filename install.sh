@@ -247,7 +247,7 @@ if [[ "$CHOSEN_MODEL_PATH" == *.gguf ]]; then
     if [ -n "$VIGIL_LLM_BIN" ] && [ -f "$VIGIL_LLM_BIN" ]; then
         LLM_BIN_PATH_TOML="$VIGIL_LLM_BIN"
         ok "Using custom llama-cli from env VIGIL_LLM_BIN: $LLM_BIN_PATH_TOML"
-    elif ! command -v llama-cli >/dev/null 2>&1 && [ ! -f "./bin/llama-bin/llama-cli" ]; then
+    elif ! command -v llama-cli >/dev/null 2>&1 && [ ! -f "./bin/llama-bin/llama-cli" ] && [ ! -f "./bin/llama-bin/bin/llama-cli" ]; then
         info "llama-cli not found in PATH or bin folder. Downloading pre-compiled llama.cpp for Linux..."
         mkdir -p ./bin
         LLAMA_ZIP="./bin/llama-zip.zip"
@@ -260,12 +260,20 @@ if [[ "$CHOSEN_MODEL_PATH" == *.gguf ]]; then
         if command -v unzip >/dev/null 2>&1; then
             unzip -q -o "$LLAMA_ZIP" -d ./bin/llama-bin
             rm -f "$LLAMA_ZIP"
-            chmod +x ./bin/llama-bin/llama-cli
-            LLM_BIN_PATH_TOML="./bin/llama-bin/llama-cli"
+            
+            if [ -f "./bin/llama-bin/bin/llama-cli" ]; then
+                chmod +x ./bin/llama-bin/bin/llama-cli
+                LLM_BIN_PATH_TOML="./bin/llama-bin/bin/llama-cli"
+            else
+                chmod +x ./bin/llama-bin/llama-cli
+                LLM_BIN_PATH_TOML="./bin/llama-bin/llama-cli"
+            fi
             ok "Extracted llama-cli to $LLM_BIN_PATH_TOML"
         else
             warn "unzip is not installed. Skipping automatic extraction of llama-cli."
         fi
+    elif [ -f "./bin/llama-bin/bin/llama-cli" ]; then
+        LLM_BIN_PATH_TOML="./bin/llama-bin/bin/llama-cli"
     elif [ -f "./bin/llama-bin/llama-cli" ]; then
         LLM_BIN_PATH_TOML="./bin/llama-bin/llama-cli"
     fi

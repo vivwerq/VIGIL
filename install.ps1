@@ -150,15 +150,22 @@ if ($ChosenModelPath -like "*.gguf") {
     if ($env:VIGIL_LLM_BIN -and (Test-Path $env:VIGIL_LLM_BIN)) {
         $LLM_BIN_PATH_TOML = $env:VIGIL_LLM_BIN.Replace("\", "/")
         Write-Host "[+] Using custom llama-cli from env VIGIL_LLM_BIN: $LLM_BIN_PATH_TOML" -ForegroundColor Green
-    } elseif (!(Get-Command llama-cli -ErrorAction SilentlyContinue) -and !(Test-Path ".\bin\llama-bin\llama-cli.exe")) {
+    } elseif (!(Get-Command llama-cli -ErrorAction SilentlyContinue) -and !(Test-Path ".\bin\llama-bin\llama-cli.exe") -and !(Test-Path ".\bin\llama-bin\bin\llama-cli.exe")) {
         Write-Host "[*] llama-cli not found in PATH or bin folder. Downloading pre-compiled llama.cpp for Windows..." -ForegroundColor Cyan
         if (!(Test-Path ".\bin")) { New-Item -ItemType Directory -Force -Path ".\bin" | Out-Null }
         $llamaZip = ".\bin\llama-bin.zip"
         Invoke-WebRequest -Uri "https://github.com/ggerganov/llama.cpp/releases/download/b3130/llama-b3130-bin-win-avx2-x64.zip" -OutFile $llamaZip
         Expand-Archive -Path $llamaZip -DestinationPath ".\bin\llama-bin" -Force
         Remove-Item $llamaZip -Force
-        $LLM_BIN_PATH_TOML = "./bin/llama-bin/llama-cli.exe"
+        
+        if (Test-Path ".\bin\llama-bin\bin\llama-cli.exe") {
+            $LLM_BIN_PATH_TOML = "./bin/llama-bin/bin/llama-cli.exe"
+        } else {
+            $LLM_BIN_PATH_TOML = "./bin/llama-bin/llama-cli.exe"
+        }
         Write-Host "[+] Extracted llama-cli to $LLM_BIN_PATH_TOML" -ForegroundColor Green
+    } elseif (Test-Path ".\bin\llama-bin\bin\llama-cli.exe") {
+        $LLM_BIN_PATH_TOML = "./bin/llama-bin/bin/llama-cli.exe"
     } elseif (Test-Path ".\bin\llama-bin\llama-cli.exe") {
         $LLM_BIN_PATH_TOML = "./bin/llama-bin/llama-cli.exe"
     }
