@@ -43,6 +43,12 @@ pub struct AnomalyReport {
     /// Estimated time in seconds until the anomalous trend leads to service degradation.
     #[serde(default)]
     pub time_to_impact_secs: Option<u64>,
+    /// Estimated time in minutes until the anomalous trend leads to service degradation.
+    #[serde(default)]
+    pub time_to_impact_minutes: Option<f64>,
+    /// The trend score computed by Holt's linear trend forecasting (0.0 to 1.0).
+    #[serde(default)]
+    pub trend_score: f64,
     /// The metric name predicted to breach the critical threshold.
     #[serde(default)]
     pub predicted_breach_metric: Option<String>,

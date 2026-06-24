@@ -81,15 +81,82 @@ struct Cli {
     wizard: bool,
 }
 
+/// Bounded memory cache to prevent unbounded growth in diagnostics reports.
+pub struct BoundedReportCache {
+    map: HashMap<Uuid, CopilotReport>,
+    order: std::collections::VecDeque<Uuid>,
+    capacity: usize,
+}
+
+impl BoundedReportCache {
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            map: HashMap::new(),
+            order: std::collections::VecDeque::new(),
+            capacity,
+        }
+    }
+
+    pub fn insert(&mut self, key: Uuid, val: CopilotReport) {
+        if self.map.insert(key, val).is_none() {
+            self.order.push_back(key);
+        }
+        if self.order.len() > self.capacity {
+            if let Some(oldest) = self.order.pop_front() {
+                self.map.remove(&oldest);
+            }
+        }
+    }
+
+    pub fn get(&self, key: &Uuid) -> Option<&CopilotReport> {
+        self.map.get(key)
+    }
+}
+
+/// Token Bucket rate limiter for telemetry ingestion endpoint.
+pub struct TokenBucket {
+    capacity: f64,
+    tokens: f64,
+    refill_rate: f64,
+    last_refill: std::time::Instant,
+}
+
+impl TokenBucket {
+    pub fn new(rate: u64) -> Self {
+        let cap = rate as f64;
+        Self {
+            capacity: cap,
+            tokens: cap,
+            refill_rate: cap,
+            last_refill: std::time::Instant::now(),
+        }
+    }
+
+    pub fn check_and_consume(&mut self) -> bool {
+        let now = std::time::Instant::now();
+        let elapsed = now.duration_since(self.last_refill).as_secs_f64();
+        self.last_refill = now;
+
+        self.tokens = (self.tokens + elapsed * self.refill_rate).min(self.capacity);
+        if self.tokens >= 1.0 {
+            self.tokens -= 1.0;
+            true
+        } else {
+            false
+        }
+    }
+}
+
 /// Shared state for the HTTP server
 struct SharedState {
     store: VigilStore,
     copilot: LlmCopilot,
-    copilot_reports: Arc<Mutex<HashMap<Uuid, CopilotReport>>>,
-    scenario_tx: std::sync::mpsc::Sender<String>,
+    copilot_reports: Arc<Mutex<BoundedReportCache>>,
+    scenario_tx: tokio::sync::mpsc::Sender<String>,
     total_ingested: Arc<AtomicU64>,
     total_anomalies: Arc<AtomicU64>,
     raw_ingest_tx: tokio::sync::mpsc::Sender<Vec<u8>>,
+    rate_limiter: Mutex<TokenBucket>,
 }
 
 fn ask_prompt(question: &str, default: &str) -> String {
@@ -253,12 +320,31 @@ async fn run_daemon(cli: &Cli, config: &VigilConfig) -> Result<()> {
     let detect_config = DetectionEngineConfig {
         window_size: config.detection.window_size,
         anomaly_threshold: config.detection.anomaly_threshold,
+        ml_num_trees: config.detection.ml_num_trees,
+        ml_subsample_size: config.detection.ml_subsample_size,
         ..Default::default()
     };
     let mut detection_engine = DetectionEngine::new(detect_config);
 
     // Initialize LLM Copilot Interface
     let copilot = LlmCopilot::new(config.llm.clone());
+
+    // Perform TPM Attestation on the model file to prove integrity
+    let attestation_nonce = uuid::Uuid::now_v7().to_string();
+    tracing::info!("Performing TPM 2.0 measurement on GGUF model...");
+    match vigil_core::tpm::attest_gguf_model(&config.llm.model_path, &attestation_nonce) {
+        Ok(report) => {
+            tracing::info!(
+                pcr = %report.pcr_index,
+                hash = %report.model_hash,
+                verified = %report.is_verified,
+                "TPM 2.0 attestation verification succeeded"
+            );
+        }
+        Err(e) => {
+            tracing::error!("TPM 2.0 attestation failed: {:?}", e);
+        }
+    }
 
     // Parse HMAC keys
     let mut hmac_keys = std::collections::HashMap::new();
@@ -282,7 +368,7 @@ async fn run_daemon(cli: &Cli, config: &VigilConfig) -> Result<()> {
 
     // Channels for telemetry ingestion and generator control
     let (raw_ingest_tx, mut raw_ingest_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(10000);
-    let (scenario_tx, scenario_rx) = std::sync::mpsc::channel::<String>();
+    let (scenario_tx, mut scenario_rx) = tokio::sync::mpsc::channel::<String>(10);
 
     if cli.mode == "synthetic" {
         tracing::info!(
@@ -309,7 +395,9 @@ async fn run_daemon(cli: &Cli, config: &VigilConfig) -> Result<()> {
                 scenarios::degraded_optics_scenario()
             }
             Some("congestion-buildup") => {
-                tracing::warn!("⚠️  Scenario: CONGESTION BUILDUP — simulating progressive traffic growth");
+                tracing::warn!(
+                    "⚠️  Scenario: CONGESTION BUILDUP — simulating progressive traffic growth"
+                );
                 scenarios::progressive_congestion_scenario()
             }
             Some("security-incident") => {
@@ -332,8 +420,8 @@ async fn run_daemon(cli: &Cli, config: &VigilConfig) -> Result<()> {
 
         let raw_ingest_tx_clone = raw_ingest_tx.clone();
         let events_count = cli.events;
-        // Dedicated generator thread to support dynamic scenario switching via web UI
-        std::thread::spawn(move || {
+        // Spawn asynchronous telemetry generator task
+        tokio::spawn(async move {
             let mut generator = TelemetryGenerator::new(gen_config);
             let mut count = 0;
             let interval = std::time::Duration::from_millis(500);
@@ -357,14 +445,14 @@ async fn run_daemon(cli: &Cli, config: &VigilConfig) -> Result<()> {
                 if count < events_count {
                     let envelope = generator.generate_event();
                     if let Ok(json) = serde_json::to_vec(&envelope) {
-                        if raw_ingest_tx_clone.blocking_send(json).is_err() {
+                        if raw_ingest_tx_clone.send(json).await.is_err() {
                             break;
                         }
                     }
                     count += 1;
                 }
 
-                std::thread::sleep(interval);
+                tokio::time::sleep(interval).await;
             }
         });
     } else {
@@ -376,7 +464,8 @@ async fn run_daemon(cli: &Cli, config: &VigilConfig) -> Result<()> {
     // Share state variables with web server
     let total_ingested = Arc::new(AtomicU64::new(0));
     let total_anomalies = Arc::new(AtomicU64::new(0));
-    let copilot_reports = Arc::new(Mutex::new(HashMap::new()));
+    let copilot_reports = Arc::new(Mutex::new(BoundedReportCache::new(100)));
+    let rate_limiter = Mutex::new(TokenBucket::new(config.ingestion.max_events_per_second));
 
     let shared_state = Arc::new(SharedState {
         store: store.clone(),
@@ -386,6 +475,7 @@ async fn run_daemon(cli: &Cli, config: &VigilConfig) -> Result<()> {
         total_ingested: total_ingested.clone(),
         total_anomalies: total_anomalies.clone(),
         raw_ingest_tx: raw_ingest_tx.clone(),
+        rate_limiter,
     });
 
     // Build the Axum router
@@ -634,8 +724,11 @@ async fn generate_copilot_ondemand(
     {
         Ok(report) => {
             // Cache in memory
-            let mut cache = state.copilot_reports.lock().await;
-            cache.insert(anomaly_report.id, report.clone());
+            state
+                .copilot_reports
+                .lock()
+                .await
+                .insert(anomaly_report.id, report.clone());
 
             // Persist to store
             if let Ok(serialized) = serde_json::to_vec(&report) {
@@ -674,12 +767,9 @@ async fn get_anomaly_report_details(
     };
 
     // 2. Fetch associated telemetry envelope to query playbooks
-    let envelope = match state.store.get_telemetry(anomaly_report.envelope_id) {
-        Ok(Some(env)) => env,
-        _ => {
-            tracing::error!("Failed to fetch telemetry context for anomaly ID {}", id);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
-        }
+    let Ok(Some(envelope)) = state.store.get_telemetry(anomaly_report.envelope_id) else {
+        tracing::error!("Failed to fetch telemetry context for anomaly ID {}", id);
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
     };
 
     // 3. Check copilot report in memory cache
@@ -743,7 +833,7 @@ async fn post_simulate(
     Json(payload): Json<SimulateRequest>,
 ) -> Result<impl IntoResponse, StatusCode> {
     tracing::info!("Scenario switch request: {}", payload.scenario);
-    if state.scenario_tx.send(payload.scenario).is_err() {
+    if state.scenario_tx.send(payload.scenario).await.is_err() {
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
     Ok(StatusCode::OK)
@@ -753,6 +843,15 @@ async fn post_telemetry_submit(
     State(state): State<Arc<SharedState>>,
     body: axum::body::Bytes,
 ) -> Result<impl IntoResponse, StatusCode> {
+    // Check rate limit
+    {
+        let mut limiter = state.rate_limiter.lock().await;
+        if !limiter.check_and_consume() {
+            tracing::warn!("Rate limit exceeded at /api/telemetry/submit");
+            return Err(StatusCode::TOO_MANY_REQUESTS);
+        }
+    }
+
     tracing::debug!("Received telemetry submit request ({} bytes)", body.len());
     if state.raw_ingest_tx.send(body.to_vec()).await.is_err() {
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
@@ -789,4 +888,58 @@ fn print_copilot_report(report: &CopilotReport) {
     println!(
         "\x1b[1;36m════════════════════════════════════════════════════════════════════════════════\x1b[0m\n"
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_bounded_report_cache_eviction() {
+        let mut cache = BoundedReportCache::new(3);
+        let id1 = Uuid::now_v7();
+        let id2 = Uuid::now_v7();
+        let id3 = Uuid::now_v7();
+        let id4 = Uuid::now_v7();
+
+        let report = CopilotReport {
+            diagnosis: "Test".to_string(),
+            reasoning: "Test".to_string(),
+            impact: "Test".to_string(),
+            mitigation: vec![],
+            raw_response: "Test".to_string(),
+            predicted_issue: "Test".to_string(),
+            confidence: "90%".to_string(),
+            root_cause: "Test".to_string(),
+            recommended_action: "Test".to_string(),
+            estimated_lead_time: "Test".to_string(),
+        };
+
+        cache.insert(id1, report.clone());
+        cache.insert(id2, report.clone());
+        cache.insert(id3, report.clone());
+
+        assert!(cache.get(&id1).is_some());
+        assert!(cache.get(&id2).is_some());
+        assert!(cache.get(&id3).is_some());
+
+        // Inserting the 4th element triggers eviction of the oldest (id1)
+        cache.insert(id4, report);
+
+        assert!(cache.get(&id1).is_none());
+        assert!(cache.get(&id2).is_some());
+        assert!(cache.get(&id3).is_some());
+        assert!(cache.get(&id4).is_some());
+    }
+
+    #[test]
+    fn test_token_bucket_rate_limiting() {
+        let mut limiter = TokenBucket::new(10);
+        // Initially full capacity
+        for _ in 0..10 {
+            assert!(limiter.check_and_consume());
+        }
+        // Next check should fail
+        assert!(!limiter.check_and_consume());
+    }
 }

@@ -9,7 +9,7 @@ description = "Async telemetry ingestion pipeline for VIGIL"
 vigil-core = { path = "../vigil-core" }
 tokio = { workspace = true }
 serde = { workspace = true }
-serde_json = { workspace = true }
+serde_json = { workspace = true, features = ["raw_value"] }
 tracing = { workspace = true }
 chrono = { workspace = true }
 uuid = { workspace = true }

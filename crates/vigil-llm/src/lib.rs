@@ -105,7 +105,9 @@ impl LlmCopilot {
 
         match detected_backend {
             InferenceBackend::LlamaCpp => {
-                let model_name = config.model_path.file_name()
+                let model_name = config
+                    .model_path
+                    .file_name()
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_else(|| "unknown".to_string());
                 info!("╭─────────────────────────────────────────────────────╮");
@@ -129,7 +131,10 @@ impl LlmCopilot {
             }
         }
 
-        Self { config, detected_backend }
+        Self {
+            config,
+            detected_backend,
+        }
     }
 
     /// Returns which AI inference backend was detected at startup.
@@ -140,9 +145,17 @@ impl LlmCopilot {
     /// Probe the system for available AI backends, in priority order.
     fn detect_backend(config: &LlmConfig) -> InferenceBackend {
         // 1. Check for a real GGUF model file on disk
-        if config.model_path.exists() && config.model_path.extension().map(|e| e == "gguf").unwrap_or(false) {
+        if config.model_path.exists()
+            && config
+                .model_path
+                .extension()
+                .map(|e| e == "gguf")
+                .unwrap_or(false)
+        {
             // Also verify llama-cli is available
-            let binary = config.bin_path.clone().unwrap_or_else(|| std::env::var("VIGIL_LLM_BIN").unwrap_or_else(|_| "llama-cli".to_string()));
+            let binary = config.bin_path.clone().unwrap_or_else(|| {
+                std::env::var("VIGIL_LLM_BIN").unwrap_or_else(|_| "llama-cli".to_string())
+            });
             if which_exists(&binary) || std::path::Path::new(&binary).exists() {
                 return InferenceBackend::LlamaCpp;
             }
@@ -194,7 +207,9 @@ impl LlmCopilot {
 
         // 1. Attempt local llama.cpp FFI/CLI subprocess execution
         if self.config.model_path.exists() {
-            let binary = self.config.bin_path.clone().unwrap_or_else(|| std::env::var("VIGIL_LLM_BIN").unwrap_or_else(|_| "llama-cli".to_string()));
+            let binary = self.config.bin_path.clone().unwrap_or_else(|| {
+                std::env::var("VIGIL_LLM_BIN").unwrap_or_else(|_| "llama-cli".to_string())
+            });
             info!(
                 "Attempting local llama.cpp inference using binary '{}' and model '{:?}'",
                 binary, self.config.model_path
@@ -363,7 +378,8 @@ pub fn generate_copilot_prompt(envelope: &TelemetryEnvelope, report: &AnomalyRep
 
     prompt.push_str("\nRespond exactly in the following format:\n");
     prompt.push_str("DIAGNOSIS: <Brief summary of the issue>\n");
-    prompt.push_str("REASONING: <Step-by-step reasoning based on telemetry and detector verdicts>\n");
+    prompt
+        .push_str("REASONING: <Step-by-step reasoning based on telemetry and detector verdicts>\n");
     prompt.push_str("IMPACT: <NOC impact assessment (ground station link status, loss of tracking, packet drop probability)>\n");
     prompt.push_str("MITIGATION: <Immediate, actionable remediation steps for NOC operators>\n");
     prompt.push_str("PREDICTED_ISSUE: <Predicted Issue name/category>\n");
@@ -405,36 +421,36 @@ pub fn parse_llm_response(text: &str) -> CopilotReport {
 
     for line in text.lines() {
         let trimmed = line.trim();
-        if trimmed.starts_with("DIAGNOSIS:") {
+        if let Some(stripped) = trimmed.strip_prefix("DIAGNOSIS:") {
             current_section = 1;
-            diagnosis = trimmed["DIAGNOSIS:".len()..].trim().to_string();
-        } else if trimmed.starts_with("REASONING:") {
+            diagnosis = stripped.trim().to_string();
+        } else if let Some(stripped) = trimmed.strip_prefix("REASONING:") {
             current_section = 2;
-            reasoning = trimmed["REASONING:".len()..].trim().to_string();
-        } else if trimmed.starts_with("IMPACT:") {
+            reasoning = stripped.trim().to_string();
+        } else if let Some(stripped) = trimmed.strip_prefix("IMPACT:") {
             current_section = 3;
-            impact = trimmed["IMPACT:".len()..].trim().to_string();
-        } else if trimmed.starts_with("MITIGATION:") {
+            impact = stripped.trim().to_string();
+        } else if let Some(stripped) = trimmed.strip_prefix("MITIGATION:") {
             current_section = 4;
-            let val = trimmed["MITIGATION:".len()..].trim();
+            let val = stripped.trim();
             if !val.is_empty() {
                 mitigation.push(val.to_string());
             }
-        } else if trimmed.starts_with("PREDICTED_ISSUE:") {
+        } else if let Some(stripped) = trimmed.strip_prefix("PREDICTED_ISSUE:") {
             current_section = 5;
-            predicted_issue = trimmed["PREDICTED_ISSUE:".len()..].trim().to_string();
-        } else if trimmed.starts_with("CONFIDENCE:") {
+            predicted_issue = stripped.trim().to_string();
+        } else if let Some(stripped) = trimmed.strip_prefix("CONFIDENCE:") {
             current_section = 6;
-            confidence = trimmed["CONFIDENCE:".len()..].trim().to_string();
-        } else if trimmed.starts_with("ROOT_CAUSE:") {
+            confidence = stripped.trim().to_string();
+        } else if let Some(stripped) = trimmed.strip_prefix("ROOT_CAUSE:") {
             current_section = 7;
-            root_cause = trimmed["ROOT_CAUSE:".len()..].trim().to_string();
-        } else if trimmed.starts_with("RECOMMENDED_ACTION:") {
+            root_cause = stripped.trim().to_string();
+        } else if let Some(stripped) = trimmed.strip_prefix("RECOMMENDED_ACTION:") {
             current_section = 8;
-            recommended_action = trimmed["RECOMMENDED_ACTION:".len()..].trim().to_string();
-        } else if trimmed.starts_with("ESTIMATED_LEAD_TIME:") {
+            recommended_action = stripped.trim().to_string();
+        } else if let Some(stripped) = trimmed.strip_prefix("ESTIMATED_LEAD_TIME:") {
             current_section = 9;
-            estimated_lead_time = trimmed["ESTIMATED_LEAD_TIME:".len()..].trim().to_string();
+            estimated_lead_time = stripped.trim().to_string();
         } else {
             match current_section {
                 1 => {
@@ -542,7 +558,10 @@ pub fn parse_llm_response(text: &str) -> CopilotReport {
         root_cause = reasoning.clone();
     }
     if recommended_action.is_empty() {
-        recommended_action = mitigation.first().cloned().unwrap_or_else(|| "Manual inspection required".to_string());
+        recommended_action = mitigation
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "Manual inspection required".to_string());
     }
     if estimated_lead_time.is_empty() {
         estimated_lead_time = "Immediate".to_string();
@@ -653,13 +672,19 @@ fn generate_expert_fallback(envelope: &TelemetryEnvelope, report: &AnomalyReport
             ));
             response.push_str("IMPACT: Loss of route redundancy to the target ground station, potential traffic congestion on standby links.\n");
             response.push_str("MITIGATION:\n");
-            response.push_str("- Ping peer IP address to verify basic ICMP layer-3 connectivity.\n");
-            response.push_str("- Retrieve local BGP state machine logs to check for hold-time expirations.\n");
-            response.push_str("- Contact MPLS backhaul provider to verify physical link integrity.\n");
+            response
+                .push_str("- Ping peer IP address to verify basic ICMP layer-3 connectivity.\n");
+            response.push_str(
+                "- Retrieve local BGP state machine logs to check for hold-time expirations.\n",
+            );
+            response
+                .push_str("- Contact MPLS backhaul provider to verify physical link integrity.\n");
             response.push_str("PREDICTED_ISSUE: BGP Session Down\n");
             response.push_str("CONFIDENCE: 95%\n");
             response.push_str("ROOT_CAUSE: BGP neighbor peer IP address unreachable or session hold-timer expired\n");
-            response.push_str("RECOMMENDED_ACTION: Verify layer-3 link route status and ping BGP neighbor\n");
+            response.push_str(
+                "RECOMMENDED_ACTION: Verify layer-3 link route status and ping BGP neighbor\n",
+            );
             response.push_str("ESTIMATED_LEAD_TIME: 30 seconds\n");
         }
         NetworkEvent::Lsp(metrics) => {
@@ -670,12 +695,18 @@ fn generate_expert_fallback(envelope: &TelemetryEnvelope, report: &AnomalyReport
             ));
             response.push_str("IMPACT: Increased round-trip time for high-rate telemetry streams; risk of telemetry packet discard.\n");
             response.push_str("MITIGATION:\n");
-            response.push_str("- Initiate LSP traceroute to identify the hop introducing latency.\n");
-            response.push_str("- Verify LSP path constraints and link utilization along the transit path.\n");
-            response.push_str("- Manually force path recalculation if secondary LSP path is available.\n");
+            response
+                .push_str("- Initiate LSP traceroute to identify the hop introducing latency.\n");
+            response.push_str(
+                "- Verify LSP path constraints and link utilization along the transit path.\n",
+            );
+            response.push_str(
+                "- Manually force path recalculation if secondary LSP path is available.\n",
+            );
             response.push_str("PREDICTED_ISSUE: LSP Path Degradation\n");
             response.push_str("CONFIDENCE: 92%\n");
-            response.push_str("ROOT_CAUSE: Optical path attenuation or transit interface congestion\n");
+            response
+                .push_str("ROOT_CAUSE: Optical path attenuation or transit interface congestion\n");
             response.push_str("RECOMMENDED_ACTION: Reroute RSVP-TE tunnel to backup LSP path\n");
             response.push_str("ESTIMATED_LEAD_TIME: 15 seconds\n");
         }
@@ -685,15 +716,25 @@ fn generate_expert_fallback(envelope: &TelemetryEnvelope, report: &AnomalyReport
                 "REASONING: Anomaly engine flagged metric values from host {}. Score {:.3} crossed critical threshold.\n",
                 envelope.source.hostname, report.score
             ));
-            response.push_str("IMPACT: Performance degradation or packet drop on ground station interface.\n");
+            response.push_str(
+                "IMPACT: Performance degradation or packet drop on ground station interface.\n",
+            );
             response.push_str("MITIGATION:\n");
-            response.push_str("- Inspect interface error counters for CRC, framing, or alignment issues.\n");
-            response.push_str("- Verify transceiver optical RX/TX power levels for transceiver health.\n");
-            response.push_str("- Collect interface traffic profile to rule out unauthorized multicast bursts.\n");
+            response.push_str(
+                "- Inspect interface error counters for CRC, framing, or alignment issues.\n",
+            );
+            response.push_str(
+                "- Verify transceiver optical RX/TX power levels for transceiver health.\n",
+            );
+            response.push_str(
+                "- Collect interface traffic profile to rule out unauthorized multicast bursts.\n",
+            );
             response.push_str("PREDICTED_ISSUE: Link Congestion / Packet Loss\n");
             response.push_str("CONFIDENCE: 88%\n");
             response.push_str("ROOT_CAUSE: High ingress queue utilization or interface error count threshold breach\n");
-            response.push_str("RECOMMENDED_ACTION: Check interface statistics and check physical link cabling\n");
+            response.push_str(
+                "RECOMMENDED_ACTION: Check interface statistics and check physical link cabling\n",
+            );
             response.push_str("ESTIMATED_LEAD_TIME: 60 seconds\n");
         }
     }
@@ -767,6 +808,8 @@ mod tests {
             explanation: "BGP peer is Idle".into(),
             recommendations: vec![],
             time_to_impact_secs: None,
+            time_to_impact_minutes: None,
+            trend_score: 0.0,
             predicted_breach_metric: None,
         };
 
@@ -815,6 +858,8 @@ mod tests {
             explanation: "BGP peer is Idle".into(),
             recommendations: vec![],
             time_to_impact_secs: None,
+            time_to_impact_minutes: None,
+            trend_score: 0.0,
             predicted_breach_metric: None,
         };
 
@@ -877,6 +922,8 @@ mod tests {
             explanation: "BGP peer is Idle".into(),
             recommendations: vec![],
             time_to_impact_secs: None,
+            time_to_impact_minutes: None,
+            trend_score: 0.0,
             predicted_breach_metric: None,
         };
 

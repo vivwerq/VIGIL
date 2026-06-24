@@ -44,9 +44,9 @@ pub fn attest_gguf_model<P: AsRef<Path>>(
     // In dev mode/fallback, if the file doesn't exist, we don't crash, we return a mock report.
     let hash = if path.exists() {
         let file = File::open(path).map_err(VigilError::Io)?;
-        let mut reader = BufReader::new(file);
+        let mut reader = BufReader::with_capacity(1024 * 1024, file);
         let mut hasher = Sha256::new();
-        let mut buffer = [0; 65536]; // 64KB chunks
+        let mut buffer = vec![0u8; 1024 * 1024]; // 1MB heap-allocated chunk buffer
 
         loop {
             let count = reader.read(&mut buffer).map_err(VigilError::Io)?;

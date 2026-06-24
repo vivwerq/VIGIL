@@ -8,6 +8,7 @@ use linfa::DatasetBase;
 use ndarray::Array2;
 
 /// An Isolation Forest model for unsupervised anomaly detection.
+#[derive(Clone)]
 pub struct IsolationForest {
     num_trees: usize,
     subsample_size: usize,
@@ -60,7 +61,7 @@ impl IsolationForest {
                 }
             }
 
-            let tree = IsolationTree::new(&sample_data, 0, max_height, &mut rng);
+            let tree = IsolationTree::new(&mut sample_data, 0, max_height, &mut rng);
             trees.push(tree);
         }
 
@@ -91,10 +92,12 @@ impl IsolationForest {
 }
 
 /// A single Isolation Tree.
+#[derive(Clone)]
 struct IsolationTree {
     root: Option<Box<Node>>,
 }
 
+#[derive(Clone)]
 enum Node {
     Internal {
         split_val: f64,
@@ -107,56 +110,16 @@ enum Node {
 }
 
 impl IsolationTree {
-    fn new(data: &[f64], current_height: usize, max_height: usize, rng: &mut LcgRng) -> Self {
+    fn new(data: &mut [f64], current_height: usize, max_height: usize, rng: &mut LcgRng) -> Self {
         if data.len() <= 1 || current_height >= max_height {
             return Self {
                 root: Some(Box::new(Node::Leaf { size: data.len() })),
             };
         }
 
-        // Find min and max to determine partition range
-        let mut min = data[0];
-        let mut max = data[0];
-        for &val in data.iter().skip(1) {
-            if val < min {
-                min = val;
-            }
-            if val > max {
-                max = val;
-            }
-        }
-
-        if (max - min).abs() < 1e-9 {
-            return Self {
-                root: Some(Box::new(Node::Leaf { size: data.len() })),
-            };
-        }
-
-        // Random split point between min and max
-        let rand_factor = (rng.next_u32() as f64) / (u32::MAX as f64);
-        let split_val = min + rand_factor * (max - min);
-
-        // Partition data
-        let mut left_data = Vec::new();
-        let mut right_data = Vec::new();
-        for &val in data {
-            if val < split_val {
-                left_data.push(val);
-            } else {
-                right_data.push(val);
-            }
-        }
-
-        // Recurse
-        let left_child = Node::new_node(&left_data, current_height + 1, max_height, rng);
-        let right_child = Node::new_node(&right_data, current_height + 1, max_height, rng);
-
+        let root = Node::new_node(data, current_height, max_height, rng);
         Self {
-            root: Some(Box::new(Node::Internal {
-                split_val,
-                left: Box::new(left_child),
-                right: Box::new(right_child),
-            })),
+            root: Some(Box::new(root)),
         }
     }
 
@@ -169,9 +132,15 @@ impl IsolationTree {
 }
 
 impl Node {
-    fn new_node(data: &[f64], current_height: usize, max_height: usize, rng: &mut LcgRng) -> Self {
-        if data.len() <= 1 || current_height >= max_height {
-            Self::Leaf { size: data.len() }
+    fn new_node(
+        data: &mut [f64],
+        current_height: usize,
+        max_height: usize,
+        rng: &mut LcgRng,
+    ) -> Self {
+        let len = data.len();
+        if len <= 1 || current_height >= max_height {
+            Self::Leaf { size: len }
         } else {
             let mut min = data[0];
             let mut max = data[0];
@@ -185,30 +154,37 @@ impl Node {
             }
 
             if (max - min).abs() < 1e-9 {
-                return Self::Leaf { size: data.len() };
+                return Self::Leaf { size: len };
             }
 
             let rand_factor = (rng.next_u32() as f64) / (u32::MAX as f64);
             let split_val = min + rand_factor * (max - min);
 
-            let mut left_data = Vec::new();
-            let mut right_data = Vec::new();
-            for &val in data {
-                if val < split_val {
-                    left_data.push(val);
+            let mut i = 0;
+            let mut j = len;
+            while i < j {
+                if data[i] < split_val {
+                    i += 1;
                 } else {
-                    right_data.push(val);
+                    j -= 1;
+                    data.swap(i, j);
                 }
             }
 
+            if i == 0 || i == len {
+                return Self::Leaf { size: len };
+            }
+
+            let (left_slice, right_slice) = data.split_at_mut(i);
+
             let left = Box::new(Self::new_node(
-                &left_data,
+                left_slice,
                 current_height + 1,
                 max_height,
                 rng,
             ));
             let right = Box::new(Self::new_node(
-                &right_data,
+                right_slice,
                 current_height + 1,
                 max_height,
                 rng,

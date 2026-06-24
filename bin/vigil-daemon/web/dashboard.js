@@ -1163,4 +1163,22 @@ document.addEventListener('DOMContentLoaded', () => {
             closeMetricModal();
         }
     });
+
+    // Toggle Copilot Panel Expansion for better visibility
+    const copilotHeader = document.getElementById('copilot-header');
+    const mainSplit = document.querySelector('.main-split');
+    const expandIcon = document.getElementById('copilot-expand-icon');
+    if (copilotHeader && mainSplit && expandIcon) {
+        copilotHeader.addEventListener('click', (e) => {
+            if (e.target.closest('#copilot-hud-status')) return;
+            const isExpanded = mainSplit.classList.toggle('copilot-expanded');
+            if (isExpanded) {
+                expandIcon.innerText = 'COLLAPSE ⛶';
+                expandIcon.style.borderColor = 'var(--color-teal)';
+            } else {
+                expandIcon.innerText = '⛶ EXPAND';
+                expandIcon.style.borderColor = 'var(--border-color)';
+            }
+        });
+    }
 });

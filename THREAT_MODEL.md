@@ -47,8 +47,7 @@ VIGIL operates under a strict **Zero-Trust Inner-Perimeter** model. Even inside 
 ## ─── 2. Threat Analysis (STRIDE Model) ──────────────────────────────────
 
 ### Spooﬁng (Identity Theft)
-- **Threat Vector**: A malicious actor or compromised internal node crafts synthetic telemetry packets pretending to be a core MPLS router (e.g., `mcf-core-rtr-01`) to trick the system into false alerts or disguise traffic filtration.
-- **VIGIL Mitigation**: Enforces strict cryptographic **HMAC-SHA256 verification** for all ingestion pipeline inputs. Packets missing or possessing incorrect HMAC tags are discarded immediately before parsing.
+- **VIGIL Mitigation**: Enforces strict cryptographic **HMAC-SHA256 verification** for all ingestion pipeline inputs. To protect the JSON parser from exploits, a lightweight metadata parse retrieves the HMAC tag and hostname first, verifying the tag over the raw JSON bytes *before* the full typed envelope is deserialized. Packets failing verification are discarded immediately.
 
 ### Tampering (Data Manipulation)
 - **Threat Vector**: Attackers attempt to alter historical telemetry or anomaly reports stored in the database to erase tracks of an intrusion.
@@ -64,7 +63,7 @@ VIGIL operates under a strict **Zero-Trust Inner-Perimeter** model. Even inside 
 
 ### Denial of Service (Outage Invalidation)
 - **Threat Vector**: A telemetry probe floods the ingestion pipeline with garbage data, consuming memory and causing a daemon crash.
-- **VIGIL Mitigation**: Implemented bounded `tokio::mpsc` channels to enforce structural backpressure. The system uses pre-allocated memory pools where applicable, dropping oversized payloads before they are parsed.
+- **VIGIL Mitigation**: Implemented bounded `tokio::mpsc` channels to enforce structural backpressure. Additionally, the HTTP telemetry submission endpoint is protected by a thread-safe token-bucket rate limiter (`TokenBucket`) that restricts traffic to `max_events_per_second` (configured in `vigil.toml`) and returns `429 Too Many Requests` on overflow.
 
 ### Elevation of Privilege (Unauthorized Execution)
 - **Threat Vector**: A prompt injection attack on the local LLM generates a diagnostic recommendation containing shell scripts or system commands (e.g., `sudo rm -rf /`) that run when presented to the console or browser.
@@ -76,7 +75,7 @@ VIGIL operates under a strict **Zero-Trust Inner-Perimeter** model. Even inside 
 
 | Threat Vector | Risk Level | Target Subsystem | Mitigation Controls |
 | :--- | :--- | :--- | :--- |
-| **Model Hijacking / Poisoning** | Medium | LLM Copilot | Only pre-signed GGUF models stored locally in `/var/lib/vigil/models/` with SHA-256 checks are allowed to load. |
+| **Model Hijacking / Poisoning** | Medium | LLM Copilot | Hardware-backed security via TPM 2.0 attestation (`attest_gguf_model`) at startup. The system measures the GGUF model file into PCR 12 and validates an AIK-signed quote before starting the backend. |
 | **Supply Chain Dependency Vulnerability** | High | Cargo Dependencies | Strict `Cargo.lock` pinning + workspace-wide `deny.toml` limits dependencies only to verified, zero-unsafe, open-source packages. |
 | **Clock-Skew Replay Attacks** | Low | Ingestion Pipeline | Ingestion checks verify packet timestamps against ground station master NTP clocks, rejecting telemetry older than a configured tolerance. |
 | **Memory Exhaustion on Large telemetry** | High | Detection Engine | Sliding windows use fixed-size circular vectors, preventing memory allocation growth during heavy traffic spikes. |

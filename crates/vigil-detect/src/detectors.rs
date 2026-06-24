@@ -68,6 +68,7 @@ impl ZScoreDetector {
         &self,
         sample: &MetricSample,
         window: &SlidingWindow,
+        stats: &crate::stats::WindowStats,
     ) -> Option<DetectorVerdict> {
         if window.len() < self.config.min_samples {
             tracing::trace!(
@@ -79,7 +80,6 @@ impl ZScoreDetector {
             return None;
         }
 
-        let stats = window.stats();
         let mean = stats.mean;
         let stddev = stats.stddev;
 
@@ -96,7 +96,7 @@ impl ZScoreDetector {
                     expected_value: mean,
                     threshold: self.config.threshold,
                     deviation: 0.0,
-                    baseline_stats: stats,
+                    baseline_stats: stats.clone(),
                     explanation: format!(
                         "{} is {:.1}{} — matches constant baseline",
                         sample.label, sample.value, sample.unit
@@ -112,7 +112,7 @@ impl ZScoreDetector {
                     expected_value: mean,
                     threshold: self.config.threshold,
                     deviation: f64::INFINITY,
-                    baseline_stats: stats,
+                    baseline_stats: stats.clone(),
                     explanation: format!(
                         "{} is {:.1}{} — deviates from constant baseline of {:.1}{}",
                         sample.label, sample.value, sample.unit, mean, sample.unit
@@ -152,7 +152,7 @@ impl ZScoreDetector {
             expected_value: mean,
             threshold: self.config.threshold,
             deviation: z_score,
-            baseline_stats: stats,
+            baseline_stats: stats.clone(),
             explanation,
         })
     }
@@ -201,12 +201,12 @@ impl IqrDetector {
         &self,
         sample: &MetricSample,
         window: &SlidingWindow,
+        stats: &crate::stats::WindowStats,
     ) -> Option<DetectorVerdict> {
         if window.len() < self.config.min_samples {
             return None;
         }
 
-        let stats = window.stats();
         let q1 = stats.q1;
         let q3 = stats.q3;
         let iqr = stats.iqr;
@@ -265,7 +265,7 @@ impl IqrDetector {
             expected_value: stats.median,
             threshold: self.config.multiplier,
             deviation,
-            baseline_stats: stats,
+            baseline_stats: stats.clone(),
             explanation,
         })
     }
@@ -315,13 +315,13 @@ impl RateOfChangeDetector {
         &self,
         sample: &MetricSample,
         window: &SlidingWindow,
+        stats: &crate::stats::WindowStats,
     ) -> Option<DetectorVerdict> {
         if window.len() < self.config.min_samples {
             return None;
         }
 
         let previous = window.latest()?;
-        let stats = window.stats();
 
         // Calculate percentage change.
         let abs_change = (sample.value - previous).abs();
@@ -336,7 +336,7 @@ impl RateOfChangeDetector {
                 expected_value: previous,
                 threshold: self.config.pct_change_threshold,
                 deviation: 0.0,
-                baseline_stats: stats,
+                baseline_stats: stats.clone(),
                 explanation: format!(
                     "{} is {:.1}{} — minimal change from {:.1}{}",
                     sample.label, sample.value, sample.unit, previous, sample.unit
@@ -372,7 +372,7 @@ impl RateOfChangeDetector {
             expected_value: previous,
             threshold: self.config.pct_change_threshold,
             deviation: pct_change,
-            baseline_stats: stats,
+            baseline_stats: stats.clone(),
             explanation,
         })
     }
@@ -414,7 +414,7 @@ mod tests {
         let window = build_baseline(&baseline, 100);
 
         let sample = make_sample(102.0); // Within 1σ
-        let verdict = detector.analyze(&sample, &window).unwrap();
+        let verdict = detector.analyze(&sample, &window, &window.stats()).unwrap();
         assert!(
             verdict.score < 0.1,
             "Normal value should score near 0, got {}",
@@ -429,7 +429,7 @@ mod tests {
         let window = build_baseline(&baseline, 100);
 
         let sample = make_sample(200.0); // ~20σ above mean
-        let verdict = detector.analyze(&sample, &window).unwrap();
+        let verdict = detector.analyze(&sample, &window, &window.stats()).unwrap();
         assert!(
             verdict.score > 0.9,
             "Extreme value should score near 1, got {}",
@@ -445,7 +445,11 @@ mod tests {
         });
         let window = build_baseline(&[1.0, 2.0, 3.0], 100);
         let sample = make_sample(100.0);
-        assert!(detector.analyze(&sample, &window).is_none());
+        assert!(
+            detector
+                .analyze(&sample, &window, &window.stats())
+                .is_none()
+        );
     }
 
     // ── IQR tests ───────────────────────────────────────────────────────
@@ -457,7 +461,7 @@ mod tests {
         let window = build_baseline(&baseline, 100);
 
         let sample = make_sample(55.0); // Well within IQR
-        let verdict = detector.analyze(&sample, &window).unwrap();
+        let verdict = detector.analyze(&sample, &window, &window.stats()).unwrap();
         assert_eq!(verdict.score, 0.0, "Value within fences should score 0");
     }
 
@@ -468,7 +472,7 @@ mod tests {
         let window = build_baseline(&baseline, 100);
 
         let sample = make_sample(500.0); // Way above upper fence
-        let verdict = detector.analyze(&sample, &window).unwrap();
+        let verdict = detector.analyze(&sample, &window, &window.stats()).unwrap();
         assert!(
             verdict.score > 0.9,
             "Extreme outlier should score near 1, got {}",
@@ -484,7 +488,7 @@ mod tests {
         let window = build_baseline(&[100.0, 101.0, 99.0, 100.0, 102.0], 100);
 
         let sample = make_sample(103.0); // ~1% change from 102
-        let verdict = detector.analyze(&sample, &window).unwrap();
+        let verdict = detector.analyze(&sample, &window, &window.stats()).unwrap();
         assert_eq!(verdict.score, 0.0);
     }
 
@@ -494,7 +498,7 @@ mod tests {
         let window = build_baseline(&[100.0, 101.0, 99.0, 100.0, 102.0], 100);
 
         let sample = make_sample(500.0); // ~390% change from 102
-        let verdict = detector.analyze(&sample, &window).unwrap();
+        let verdict = detector.analyze(&sample, &window, &window.stats()).unwrap();
         assert!(
             verdict.score > 0.9,
             "Large jump should score high, got {}",

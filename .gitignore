@@ -22,3 +22,10 @@ Thumbs.db
 
 # Models (large binary files — download separately)
 models/*.gguf
+
+# Local Configuration
+/vigil.toml
+
+# Downloaded binaries & zip archives
+/bin/llama-bin/
+/bin/llama-zip.zip

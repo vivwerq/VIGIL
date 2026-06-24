@@ -374,12 +374,13 @@ impl VigilStore {
 
         match val_guard {
             Some(guard) => {
-                let envelope: TelemetryEnvelope =
-                    bincode::deserialize(guard.value()).map_err(|e| VigilError::DatabaseError {
-                        operation: "Deserialize Telemetry".into(),
-                        reason: e.to_string(),
-                    })?;
-                Ok(Some(envelope))
+                match bincode::deserialize(guard.value()) {
+                    Ok(envelope) => Ok(Some(envelope)),
+                    Err(e) => {
+                        tracing::warn!("Failed to deserialize Telemetry: {}. Returning None.", e);
+                        Ok(None)
+                    }
+                }
             }
             None => Ok(None),
         }
@@ -412,12 +413,13 @@ impl VigilStore {
 
         match val_guard {
             Some(guard) => {
-                let report: AnomalyReport =
-                    bincode::deserialize(guard.value()).map_err(|e| VigilError::DatabaseError {
-                        operation: "Deserialize AnomalyReport".into(),
-                        reason: e.to_string(),
-                    })?;
-                Ok(Some(report))
+                match bincode::deserialize(guard.value()) {
+                    Ok(report) => Ok(Some(report)),
+                    Err(e) => {
+                        tracing::warn!("Failed to deserialize AnomalyReport: {}. Returning None.", e);
+                        Ok(None)
+                    }
+                }
             }
             None => Ok(None),
         }
@@ -540,7 +542,7 @@ impl VigilStore {
                     reason: e.to_string(),
                 })?;
 
-            for entry in range {
+            for entry in range.rev() {
                 let (key_guard, _) = entry.map_err(|e| VigilError::DatabaseError {
                     operation: "Read Source Index Entry".into(),
                     reason: e.to_string(),
@@ -567,7 +569,7 @@ impl VigilStore {
                     reason: e.to_string(),
                 })?;
 
-            for entry in range {
+            for entry in range.rev() {
                 let (key_guard, _) = entry.map_err(|e| VigilError::DatabaseError {
                     operation: "Read Protocol Index Entry".into(),
                     reason: e.to_string(),
@@ -592,7 +594,7 @@ impl VigilStore {
                     reason: e.to_string(),
                 })?;
 
-            for entry in range {
+            for entry in range.rev() {
                 let (key_guard, _) = entry.map_err(|e| VigilError::DatabaseError {
                     operation: "Read Telemetry Entry".into(),
                     reason: e.to_string(),
@@ -625,11 +627,13 @@ impl VigilStore {
                         reason: e.to_string(),
                     })?
             {
-                let envelope: TelemetryEnvelope =
-                    bincode::deserialize(guard.value()).map_err(|e| VigilError::DatabaseError {
-                        operation: "Deserialize Telemetry in query".into(),
-                        reason: e.to_string(),
-                    })?;
+                let envelope: TelemetryEnvelope = match bincode::deserialize(guard.value()) {
+                    Ok(e) => e,
+                    Err(err) => {
+                        tracing::warn!("Failed to deserialize Telemetry in query: {}. Skipping.", err);
+                        continue;
+                    }
+                };
 
                 // Secondary filters (if queried by source + protocol, we indexed on source, so we filter by protocol here)
                 if let Some(ref protocol) = filter.protocol {
@@ -680,17 +684,19 @@ impl VigilStore {
             })?;
 
         let mut results = Vec::new();
-        for entry in range {
+        for entry in range.rev() {
             let (_, val_guard) = entry.map_err(|e| VigilError::DatabaseError {
                 operation: "Read Anomaly Entry".into(),
                 reason: e.to_string(),
             })?;
 
-            let report: AnomalyReport =
-                bincode::deserialize(val_guard.value()).map_err(|e| VigilError::DatabaseError {
-                    operation: "Deserialize AnomalyReport in query".into(),
-                    reason: e.to_string(),
-                })?;
+            let report: AnomalyReport = match bincode::deserialize(val_guard.value()) {
+                Ok(r) => r,
+                Err(err) => {
+                    tracing::warn!("Failed to deserialize AnomalyReport in query: {}. Skipping.", err);
+                    continue;
+                }
+            };
 
             // Apply filters
             if let Some(is_anom) = filter.is_anomalous {
@@ -791,18 +797,19 @@ impl VigilStore {
                     reason: e.to_string(),
                 })?;
                 let key = key_guard.value();
-                let envelope: TelemetryEnvelope =
-                    bincode::deserialize(val_guard.value()).map_err(|e| {
-                        VigilError::DatabaseError {
-                            operation: "Deserialize Telemetry for Prune".into(),
-                            reason: e.to_string(),
-                        }
-                    })?;
-                targets.push((key, envelope));
+                match bincode::deserialize::<TelemetryEnvelope>(val_guard.value()) {
+                    Ok(envelope) => {
+                        targets.push((key, Some(envelope)));
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to deserialize Telemetry for Prune: {}. Skipping index updates.", e);
+                        targets.push((key, None));
+                    }
+                }
             }
 
             // 2. Perform deletion and remove from indexes
-            for (key, envelope) in targets {
+            for (key, envelope_opt) in targets {
                 // Delete from main table
                 tel_table
                     .remove(key)
@@ -812,14 +819,16 @@ impl VigilStore {
                     })?;
                 prune_res.telemetry_deleted += 1;
 
-                // Delete from source index
-                let src_key = make_composite_index_key(&envelope.source.hostname, &key);
-                let _ = src_index.remove(src_key.as_slice());
+                if let Some(envelope) = &envelope_opt {
+                    // Delete from source index
+                    let src_key = make_composite_index_key(&envelope.source.hostname, &key);
+                    let _ = src_index.remove(src_key.as_slice());
 
-                // Delete from protocol index
-                let protocol_name = get_protocol_name(&envelope.event);
-                let proto_key = make_composite_index_key(protocol_name, &key);
-                let _ = proto_index.remove(proto_key.as_slice());
+                    // Delete from protocol index
+                    let protocol_name = get_protocol_name(&envelope.event);
+                    let proto_key = make_composite_index_key(protocol_name, &key);
+                    let _ = proto_index.remove(proto_key.as_slice());
+                }
 
                 // Check for associated anomaly report
                 if let Some(anom_id_guard) =
@@ -979,6 +988,8 @@ mod tests {
             explanation: "Latency spike detected".into(),
             recommendations: vec!["Investigate path".into()],
             time_to_impact_secs: None,
+            time_to_impact_minutes: None,
+            trend_score: 0.0,
             predicted_breach_metric: None,
         }
     }

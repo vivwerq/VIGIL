@@ -86,7 +86,7 @@ impl Default for GeneratorConfig {
 pub struct TelemetryGenerator {
     config: GeneratorConfig,
     profiles: Vec<SiteProfile>,
-    rng: rand::rngs::ThreadRng,
+    rng: rand::rngs::StdRng,
     sequence: u64,
     scenario_tick: u32,
 }
@@ -94,10 +94,11 @@ pub struct TelemetryGenerator {
 impl TelemetryGenerator {
     /// Create a new generator with the ISRO network profile.
     pub fn new(config: GeneratorConfig) -> Self {
+        use rand::SeedableRng;
         Self {
             config,
             profiles: isro_network_profile(),
-            rng: rand::rng(),
+            rng: rand::rngs::StdRng::from_rng(&mut rand::rng()),
             sequence: 0,
             scenario_tick: 0,
         }
@@ -139,7 +140,11 @@ impl TelemetryGenerator {
                     ground_truth = Some("Unauthorized SNMP Access & Port Probe".to_string());
                     self.generate_security_incident_progression(site, device)
                 }
-                _ => self.generate_normal_event(site, device)
+                "satellite-pass-degradation" => {
+                    ground_truth = Some("Satellite Pass Link Degradation (Rain Fade)".to_string());
+                    self.generate_satellite_pass_degradation(site)
+                }
+                _ => self.generate_normal_event(site, device),
             }
         } else {
             let is_anomalous = self.rng.random_bool(self.config.anomaly_rate);
@@ -170,7 +175,8 @@ impl TelemetryGenerator {
     fn generate_congestion_buildup(&mut self, site: &SiteProfile) -> NetworkEvent {
         let t = self.scenario_tick;
         // Utilization ramps up gradually from 30% to 98%
-        let util = (30.0 + (t as f64 * 2.0).min(68.0) + self.rng.random_range(-1.0..1.0)).clamp(0.0, 100.0);
+        let util = (30.0 + (t as f64 * 2.0).min(68.0) + self.rng.random_range(-1.0..1.0))
+            .clamp(0.0, 100.0);
 
         if t % 2 == 0 {
             let mut iface = self.make_baseline_interface(site);
@@ -268,7 +274,11 @@ impl TelemetryGenerator {
     }
 
     /// Generate security incident: authentication bursts and label corruptions.
-    fn generate_security_incident_progression(&mut self, _site: &SiteProfile, device: &TelemetrySource) -> NetworkEvent {
+    fn generate_security_incident_progression(
+        &mut self,
+        _site: &SiteProfile,
+        device: &TelemetrySource,
+    ) -> NetworkEvent {
         let t = self.scenario_tick;
         if t % 2 == 0 {
             NetworkEvent::Snmp(generate_snmp_auth_failure(device.ip_address))
@@ -279,9 +289,24 @@ impl TelemetryGenerator {
                 fec: "10.0.0.0/8".into(),
                 vrf: Some("ISRO-MPLS".into()),
                 tunnel_id: Some("CORRUPT-LSP".into()),
-                description: "Label stack corruption detected during secure authentication burst".into(),
+                description: "Label stack corruption detected during secure authentication burst"
+                    .into(),
             })
         }
+    }
+
+    /// Generate satellite pass link degradation progression: Eb/No signal drops due to rain fade.
+    fn generate_satellite_pass_degradation(&mut self, site: &SiteProfile) -> NetworkEvent {
+        let t = self.scenario_tick;
+        let error_rate = (t as f64 * 1.5).min(20.0);
+        let mut iface = self.make_baseline_interface(site);
+        iface.interface_name = "Antenna-Dish-01".to_string();
+        if error_rate > 5.0 {
+            iface.in_errors = (error_rate * 50.0) as u64;
+            iface.in_discards = (error_rate * 250.0) as u64;
+            iface.utilization_pct = 95.0;
+        }
+        NetworkEvent::Interface(iface)
     }
 
     /// Generate a normal (non-anomalous) event.

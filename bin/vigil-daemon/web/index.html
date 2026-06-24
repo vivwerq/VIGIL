@@ -131,10 +131,13 @@
             </section>
 
             <!-- Right Console: AI Copilot HUD -->
-            <section class="console-box">
-                <div class="console-header">
+            <section class="console-box" id="copilot-console">
+                <div class="console-header" id="copilot-header" style="cursor: pointer;">
                     <h2>AI COPILOT DIAGNOSTICS & DECISION SUPPORT</h2>
-                    <span class="anomaly-count-badge zero" id="copilot-hud-status" style="border-color: var(--border-color); color: var(--text-secondary); background: transparent;">STANDBY</span>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span class="anomaly-count-badge zero" id="copilot-hud-status" style="border-color: var(--border-color); color: var(--text-secondary); background: transparent;">STANDBY</span>
+                        <span id="copilot-expand-icon" style="font-family: var(--font-mono); font-size: 10px; color: var(--color-teal); border: 1px solid var(--border-color); padding: 2px 6px; border-radius: 2px; user-select: none;">⛶ EXPAND</span>
+                    </div>
                 </div>
                 <div class="console-content scrollable" id="diagnostics-hud">
                     <div class="hud-placeholder">

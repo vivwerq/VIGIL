@@ -55,43 +55,65 @@ impl IngestionPipeline {
 
         // Spawn the processing task
         let task = tokio::spawn(async move {
-            while let Ok(raw_bytes) = raw_rx.recv().await {
-                // Parse
-                let envelope = match parse_telemetry(&raw_bytes) {
-                    Ok(e) => e,
-                    Err(e) => {
-                        tracing::warn!(error = %e, "Parse failed, dropping event");
-                        continue;
-                    }
-                };
+            #[derive(serde::Deserialize)]
+            struct SourceHeader {
+                hostname: String,
+            }
+            #[derive(serde::Deserialize)]
+            struct HmacPayload<'a> {
+                source: SourceHeader,
+                hmac_tag: String,
+                #[serde(borrow)]
+                event: &'a serde_json::value::RawValue,
+            }
 
+            while let Ok(raw_bytes) = raw_rx.recv().await {
                 // HMAC verification (if enforced)
                 if enforce_hmac {
-                    if let Some(key) = hmac_keys.get(&envelope.source.hostname) {
-                        // Verify HMAC over the serialized event (not the whole envelope)
-                        let event_bytes = match serde_json::to_vec(&envelope.event) {
-                            Ok(b) => b,
-                            Err(e) => {
-                                tracing::error!(error = %e, "Failed to serialize event for HMAC");
-                                continue;
-                            }
-                        };
-                        if let Err(e) = key.verify_tag(
-                            &event_bytes,
-                            &envelope.hmac_tag,
-                            &envelope.source.hostname,
-                        ) {
+                    // Phase 1: Parse generic lightweight representation with RawValue
+                    let payload: HmacPayload = match serde_json::from_slice(&raw_bytes) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            tracing::warn!(error = %e, "Generic JSON parse failed, dropping event");
+                            continue;
+                        }
+                    };
+
+                    let hostname = &payload.source.hostname;
+                    let hmac_hex = &payload.hmac_tag;
+
+                    let hmac_tag = match hex_to_bytes(hmac_hex) {
+                        Some(b) => b,
+                        None => {
+                            tracing::warn!("Invalid hmac_tag hex format, dropping event");
+                            continue;
+                        }
+                    };
+
+                    if let Some(key) = hmac_keys.get(hostname) {
+                        // The raw event bytes are exactly the raw JSON representation of the event field
+                        let event_bytes = payload.event.get().as_bytes();
+                        if let Err(e) = key.verify_tag(event_bytes, &hmac_tag, hostname) {
                             tracing::error!(error = %e, "HMAC verification FAILED");
                             continue;
                         }
                     } else {
                         tracing::error!(
-                            source = %envelope.source.hostname,
+                            source = hostname,
                             "HMAC verification FAILED: no registered key found for source"
                         );
                         continue;
                     }
                 }
+
+                // Phase 2: Deserialization into fully typed TelemetryEnvelope (Safe because signature is verified)
+                let envelope = match parse_telemetry(&raw_bytes) {
+                    Ok(e) => e,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "Typed parse failed, dropping event");
+                        continue;
+                    }
+                };
 
                 // Validate
                 if let Err(e) = validate_envelope(&envelope) {
@@ -149,6 +171,18 @@ impl IngestionPipeline {
     pub fn pending_validated(&self) -> usize {
         self.validated_rx.len()
     }
+}
+
+fn hex_to_bytes(s: &str) -> Option<Vec<u8>> {
+    let mut bytes = Vec::new();
+    let mut chars = s.chars();
+    while let Some(c1) = chars.next() {
+        let c2 = chars.next()?;
+        let val1 = c1.to_digit(16)?;
+        let val2 = c2.to_digit(16)?;
+        bytes.push((val1 * 16 + val2) as u8);
+    }
+    Some(bytes)
 }
 
 #[cfg(test)]
@@ -225,5 +259,82 @@ mod tests {
 
         let result = pipeline.recv().await;
         assert!(result.is_ok()); // Pipeline recovered and processed the valid event
+    }
+
+    #[tokio::test]
+    async fn pipeline_verifies_hmac() {
+        use std::collections::HashMap;
+        use vigil_core::crypto::HmacKey;
+
+        let mut config = test_config();
+        config.ingestion.enforce_hmac = true;
+
+        let hostname = "test-rtr-01";
+        let key_bytes = vec![0xAB; 32];
+        let key = HmacKey::new(&key_bytes).unwrap();
+        let mut keys = HashMap::new();
+        keys.insert(hostname.to_string(), key.clone());
+
+        let pipeline = IngestionPipeline::new(&config, keys);
+
+        // 1. Valid event
+        let mut envelope = TelemetryEnvelope {
+            id: Uuid::now_v7(),
+            timestamp: Utc::now(),
+            source: TelemetrySource {
+                hostname: hostname.into(),
+                ip_address: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
+                device_type: DeviceType::CoreRouter,
+                site_id: "TEST-SITE".into(),
+            },
+            hmac_tag: vec![],
+            event: NetworkEvent::Bgp(BgpEvent {
+                event_type: BgpEventType::SessionUp,
+                peer: BgpPeer {
+                    address: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)),
+                    asn: 64512,
+                    hostname: None,
+                    state: BgpSessionState::Established,
+                },
+                affected_prefixes: 50,
+                as_path_length: 2,
+                local_preference: 100,
+                med: 0,
+                description: "Peer established".into(),
+            }),
+            sequence_number: 1,
+            ground_truth_label: None,
+        };
+
+        // Compute HMAC signature over the serialized event
+        let event_bytes = serde_json::to_vec(&envelope.event).unwrap();
+        let tag = key.compute_tag(&event_bytes).to_vec();
+        envelope.hmac_tag = tag;
+
+        let json = serde_json::to_vec(&envelope).unwrap();
+        pipeline.submit(json).await.unwrap();
+
+        // 2. Invalid tag event
+        let mut bad_envelope = envelope.clone();
+        bad_envelope.hmac_tag = vec![0x00; 32]; // Tampered tag
+        let bad_json = serde_json::to_vec(&bad_envelope).unwrap();
+        pipeline.submit(bad_json).await.unwrap();
+
+        // 3. Valid event again to make sure pipeline continues
+        let mut env2 = envelope.clone();
+        env2.id = Uuid::now_v7();
+        let json2 = serde_json::to_vec(&env2).unwrap();
+        pipeline.submit(json2).await.unwrap();
+
+        // The first submit should succeed
+        let res1 = pipeline.recv().await;
+        assert!(res1.is_ok());
+        assert_eq!(res1.unwrap().id, envelope.id);
+
+        // The second submit (bad tag) should be silently dropped/ignored.
+        // The third submit should succeed.
+        let res2 = pipeline.recv().await;
+        assert!(res2.is_ok());
+        assert_eq!(res2.unwrap().id, env2.id);
     }
 }

@@ -53,6 +53,13 @@ pub struct StorageConfig {
     pub compaction_interval_secs: u64,
 }
 
+fn default_ml_num_trees() -> usize {
+    50
+}
+fn default_ml_subsample_size() -> usize {
+    64
+}
+
 /// Configuration for the anomaly detection engine.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DetectionConfig {
@@ -62,6 +69,12 @@ pub struct DetectionConfig {
     pub anomaly_threshold: f64,
     /// Window size for feature extraction.
     pub window_size: usize,
+    /// Number of trees in the Isolation Forest model.
+    #[serde(default = "default_ml_num_trees")]
+    pub ml_num_trees: usize,
+    /// Subsample size for Isolation Forest model training.
+    #[serde(default = "default_ml_subsample_size")]
+    pub ml_subsample_size: usize,
 }
 
 /// Configuration for the LLM copilot.
@@ -113,6 +126,8 @@ impl Default for VigilConfig {
                 model_path: PathBuf::from("/var/lib/vigil/models/anomaly.onnx"),
                 anomaly_threshold: 0.85,
                 window_size: 1000,
+                ml_num_trees: 50,
+                ml_subsample_size: 64,
             },
             llm: LlmConfig {
                 model_path: PathBuf::from("/var/lib/vigil/models/mistral-7b-q4.gguf"),

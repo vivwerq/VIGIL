@@ -55,7 +55,7 @@ pub fn suggest_playbook(event: &NetworkEvent) -> RemediationPlaybook {
                     format!("show ip ospf neighbor {}", neighbor),
                     format!("show ip ospf interface brief"),
                     format!("ping {} size 1500 df-bit", neighbor), // MTU verification
-                    format!("clear ip ospf {} process", neighbor),
+                    "clear ip ospf process".to_string(),
                 ],
                 reasoning: format!(
                     "OSPF neighbor {} transitioned to state {}. Check MTU mismatches, verify subnets match, and test ping with DF bit set.",
@@ -93,17 +93,33 @@ pub fn suggest_playbook(event: &NetworkEvent) -> RemediationPlaybook {
         }
         NetworkEvent::Interface(intf) => {
             let name = &intf.interface_name;
-            RemediationPlaybook {
-                name: "Physical Link / Port Saturation".to_string(),
-                suggested_commands: vec![
-                    format!("show interfaces {} status", name),
-                    format!("show interfaces {} counters errors", name),
-                    format!("show policy-map interface {}", name),
-                ],
-                reasoning: format!(
-                    "Interface {} is reporting anomalous rates, potential optics degradation, or port errors. Check CRC alignment error counters, optical power levels, and QoS queue drops.",
-                    name
-                ),
+            if name.starts_with("Antenna-Dish") {
+                RemediationPlaybook {
+                    name: "Ground-Station Antenna Signal Degradation (Rain Fade)".to_string(),
+                    suggested_commands: vec![
+                        "show tracking-status".to_string(),
+                        "show rf link-budget details".to_string(),
+                        "set uplink power-control auto".to_string(),
+                        "request alternate-station handover".to_string(),
+                    ],
+                    reasoning: format!(
+                        "Antenna interface {} is reporting extreme packet drops and CRC errors during an active pass. Potential atmospheric rain fade or alignment loss. Switch to Auto Power Control or initiate backup ground station handover.",
+                        name
+                    ),
+                }
+            } else {
+                RemediationPlaybook {
+                    name: "Physical Link / Port Saturation".to_string(),
+                    suggested_commands: vec![
+                        format!("show interfaces {} status", name),
+                        format!("show interfaces {} counters errors", name),
+                        format!("show policy-map interface {}", name),
+                    ],
+                    reasoning: format!(
+                        "Interface {} is reporting anomalous rates, potential optics degradation, or port errors. Check CRC alignment error counters, optical power levels, and QoS queue drops.",
+                        name
+                    ),
+                }
             }
         }
         NetworkEvent::Snmp(snmp) => {
@@ -121,5 +137,62 @@ pub fn suggest_playbook(event: &NetworkEvent) -> RemediationPlaybook {
                 ),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{InterfaceMetrics, InterfaceStatus};
+
+    #[test]
+    fn test_default_interface_playbook() {
+        let event = NetworkEvent::Interface(InterfaceMetrics {
+            interface_name: "GigE0/0/1".to_string(),
+            oper_status: InterfaceStatus::Up,
+            in_bps: 1000,
+            out_bps: 1000,
+            in_pps: 10,
+            out_pps: 10,
+            in_errors: 0,
+            out_errors: 0,
+            in_discards: 0,
+            out_discards: 0,
+            utilization_pct: 5.0,
+            crc_errors: 0,
+        });
+
+        let playbook = suggest_playbook(&event);
+        assert_eq!(playbook.name, "Physical Link / Port Saturation");
+        assert!(playbook.suggested_commands[0].contains("GigE0/0/1"));
+    }
+
+    #[test]
+    fn test_antenna_interface_playbook() {
+        let event = NetworkEvent::Interface(InterfaceMetrics {
+            interface_name: "Antenna-Dish-01".to_string(),
+            oper_status: InterfaceStatus::Up,
+            in_bps: 1000,
+            out_bps: 1000,
+            in_pps: 10,
+            out_pps: 10,
+            in_errors: 0,
+            out_errors: 0,
+            in_discards: 0,
+            out_discards: 0,
+            utilization_pct: 5.0,
+            crc_errors: 0,
+        });
+
+        let playbook = suggest_playbook(&event);
+        assert_eq!(
+            playbook.name,
+            "Ground-Station Antenna Signal Degradation (Rain Fade)"
+        );
+        assert!(
+            playbook
+                .suggested_commands
+                .contains(&"show tracking-status".to_string())
+        );
     }
 }

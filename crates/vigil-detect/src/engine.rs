@@ -93,6 +93,10 @@ pub struct DetectionEngine {
     events_processed: u64,
     /// Total anomalies detected.
     anomalies_detected: u64,
+    /// Cache of fitted Isolation Forests for each metric.
+    ml_forests: HashMap<MetricKey, crate::ml::IsolationForest>,
+    /// Number of samples observed since last model fit per metric.
+    ml_updates: HashMap<MetricKey, usize>,
 }
 
 impl DetectionEngine {
@@ -110,6 +114,8 @@ impl DetectionEngine {
             roc_detector,
             events_processed: 0,
             anomalies_detected: 0,
+            ml_forests: HashMap::new(),
+            ml_updates: HashMap::new(),
         }
     }
 
@@ -133,7 +139,12 @@ impl DetectionEngine {
         let mut max_composite_score: f64 = 0.0;
         let mut max_ml_score: f64 = 0.0;
         let mut _max_stat_score: f64 = 0.0;
+        let mut max_trend_score: f64 = 0.0;
         let mut overall_confidence: f64 = 1.0;
+
+        let mut min_time_to_impact_secs: Option<u64> = None;
+        let mut min_time_to_impact_mins: Option<f64> = None;
+        let mut predicted_breach_metric: Option<String> = None;
 
         for sample in &samples {
             // Get or create the sliding window for this metric.
@@ -142,15 +153,18 @@ impl DetectionEngine {
                 .entry(sample.key.clone())
                 .or_insert_with(|| SlidingWindow::new(self.config.window_size));
 
+            // Precompute stats once for the window.
+            let stats = window.stats();
+
             // Run statistical detectors.
             let mut verdicts = Vec::with_capacity(4);
-            if let Some(v) = zscore.analyze(sample, window) {
+            if let Some(v) = zscore.analyze(sample, window, &stats) {
                 verdicts.push(v);
             }
-            if let Some(v) = iqr.analyze(sample, window) {
+            if let Some(v) = iqr.analyze(sample, window, &stats) {
                 verdicts.push(v);
             }
-            if let Some(v) = roc.analyze(sample, window) {
+            if let Some(v) = roc.analyze(sample, window, &stats) {
                 verdicts.push(v);
             }
 
@@ -173,15 +187,32 @@ impl DetectionEngine {
                 0.0
             };
 
-            // Run Machine Learning Isolation Forest detector
+            // Run Machine Learning Isolation Forest detector with caching
             let mut ml_score = 0.0;
-            if let Some(dataset) = crate::ml::window_to_dataset(window) {
-                let mut forest = crate::ml::IsolationForest::new(
-                    self.config.ml_num_trees,
-                    self.config.ml_subsample_size,
-                );
-                forest.fit(&dataset);
-                ml_score = forest.predict(sample.value);
+            let updates = self.ml_updates.entry(sample.key.clone()).or_insert(0);
+            *updates += 1;
+
+            let forest_exists = self.ml_forests.contains_key(&sample.key);
+            let needs_refit = !forest_exists || *updates >= 25;
+
+            if needs_refit {
+                if let Some(dataset) = crate::ml::window_to_dataset(window) {
+                    let mut forest = crate::ml::IsolationForest::new(
+                        self.config.ml_num_trees,
+                        self.config.ml_subsample_size,
+                    );
+                    forest.fit(&dataset);
+                    self.ml_forests.insert(sample.key.clone(), forest);
+                    *updates = 0;
+                }
+            }
+
+            if let Some(forest) = self.ml_forests.get(&sample.key) {
+                if (sample.value - stats.median).abs() < 1e-9 {
+                    ml_score = 0.0;
+                } else {
+                    ml_score = forest.predict(sample.value);
+                }
             }
 
             let ml_verdict = DetectorVerdict {
@@ -189,10 +220,10 @@ impl DetectionEngine {
                 metric_key: sample.key.clone(),
                 score: ml_score,
                 observed_value: sample.value,
-                expected_value: window.median(),
+                expected_value: stats.median,
                 threshold: self.config.anomaly_threshold,
                 deviation: ml_score,
-                baseline_stats: window.stats(),
+                baseline_stats: stats.clone(),
                 explanation: format!(
                     "Isolation Forest ML score is {:.3} (ensemble weight={:.2})",
                     ml_score, self.config.ml_weight
@@ -200,27 +231,126 @@ impl DetectionEngine {
             };
             verdicts.push(ml_verdict);
 
-            // NOTE (Vivek): Fusing the traditional statistical engine with linfa's Isolation Forest
-            // took me a whole night to calibrate. Originally, the ML model was overpowering the
-            // stats and raising false alarms on startup. Added the warmup factor and settled on
-            // a 80/20 stats/ML split to make it rock solid.
-            let ensemble_score = ((1.0 - self.config.ml_weight) * stat_score
-                + self.config.ml_weight * ml_score)
+            // Holt's Linear Trend / Double Exponential Smoothing
+            let mut trend_score = 0.0;
+            let mut time_to_impact_mins: Option<f64> = None;
+            let mut time_to_impact_secs: Option<u64> = None;
+            let mut trend_confidence = 0.5;
+
+            let (threshold, metric_label, is_lower_bound) = match sample.key.metric_name.as_str() {
+                "latency_us" => (15000.0, "Path Latency", false),
+                "packet_loss_pct" => (10.0, "Packet Loss", false),
+                "utilization_pct" => (85.0, "Link Utilization", false),
+                "crc_errors" => (100.0, "CRC Errors", false),
+                "in_errors" => (50.0, "Inbound Interface Errors", false),
+                "out_errors" => (50.0, "Outbound Interface Errors", false),
+                "affected_prefixes" => (500.0, "BGP Prefix Count", false),
+                "reroute_count" => (10.0, "Active LSP Reroutes", false),
+                "lsa_count" => (200.0, "OSPF LSA Flood", false),
+                "snr_db" | "ebno_db" => (6.0, "Receiver Link SNR", true),
+                _ => (0.0, "Metric", false), // 0.0 means not monitored for trend
+            };
+
+            let vals = window.values();
+            if threshold > 0.0 && vals.len() >= 15 {
+                // alpha = 0.3, beta = 0.1, forecast 10 steps ahead
+                if let Some((_level, trend_slope, forecast)) =
+                    calculate_holt_trend(&vals, 0.3, 0.1, 10)
+                {
+                    let current = sample.value;
+                    if is_lower_bound {
+                        if forecast < threshold {
+                            trend_score = 1.0;
+                        } else if current > threshold {
+                            let range = current - threshold;
+                            if range > 1e-9 {
+                                trend_score =
+                                    ((current - forecast).max(0.0) / range).clamp(0.0, 1.0);
+                            }
+                        } else {
+                            trend_score = 1.0;
+                        }
+                    } else {
+                        if forecast > threshold {
+                            trend_score = 1.0;
+                        } else if current < threshold {
+                            let range = threshold - current;
+                            if range > 1e-9 {
+                                trend_score =
+                                    ((forecast - current).max(0.0) / range).clamp(0.0, 1.0);
+                            }
+                        } else {
+                            trend_score = 1.0;
+                        }
+                    }
+
+                    // Time-to-Impact calculation based on trend slope (using a standard 5s polling interval)
+                    let interval_secs = 5.0;
+                    if is_lower_bound {
+                        if trend_slope < -1e-5 && current > threshold {
+                            let distance = current - threshold;
+                            let est_intervals = distance / trend_slope.abs();
+                            let secs = est_intervals * interval_secs;
+                            time_to_impact_secs = Some(secs.round() as u64);
+                            time_to_impact_mins = Some((secs / 60.0).round().max(1.0));
+                        }
+                    } else {
+                        if trend_slope > 1e-5 && current < threshold {
+                            let distance = threshold - current;
+                            let est_intervals = distance / trend_slope;
+                            let secs = est_intervals * interval_secs;
+                            time_to_impact_secs = Some(secs.round() as u64);
+                            time_to_impact_mins = Some((secs / 60.0).round().max(1.0));
+                        }
+                    }
+
+                    // Confidence score from trend slope signal-to-noise ratio
+                    let stddev = stats.stddev;
+                    if stddev > 1e-9 {
+                        let snr = trend_slope.abs() / stddev;
+                        let base_conf = (snr / 2.0).clamp(0.5, 0.95);
+                        let warmup = if vals.len() >= 20 {
+                            1.0
+                        } else {
+                            vals.len() as f64 / 20.0
+                        };
+                        trend_confidence = base_conf * warmup;
+                    } else {
+                        trend_confidence = 0.8;
+                    }
+                }
+            }
+
+            // Find maximum critical spike from Z-Score, IQR, or Rate of Change
+            let critical_spikes = verdicts
+                .iter()
+                .filter(|v| v.detector_type != DetectorType::IsolationForest)
+                .map(|v| v.score)
+                .fold(0.0, f64::max);
+
+            // Weighted Ensemble Score:
+            // final_score = max(critical_spikes, 0.4*trend_score + 0.3*ml_score + 0.3*stat_score)
+            let ensemble_score = (critical_spikes)
+                .max(0.4 * trend_score + 0.3 * ml_score + 0.3 * stat_score)
                 .clamp(0.0, 1.0);
 
             if ensemble_score > max_composite_score {
                 max_composite_score = ensemble_score;
                 max_ml_score = ml_score;
                 _max_stat_score = stat_score;
+                max_trend_score = trend_score;
 
-                // Confidence: agreement between statistical and ML detectors + window warmup factor
+                if let Some(secs) = time_to_impact_secs {
+                    min_time_to_impact_secs = Some(secs);
+                }
+                if let Some(mins) = time_to_impact_mins {
+                    min_time_to_impact_mins = Some(mins);
+                    predicted_breach_metric = Some(metric_label.to_string());
+                }
+
+                // Overall confidence combines detector agreement and trend confidence
                 let agreement = 1.0 - (stat_score - ml_score).abs();
-                let warmup_factor = if window.len() >= 20 {
-                    1.0
-                } else {
-                    window.len() as f64 / 20.0
-                };
-                overall_confidence = (agreement * warmup_factor).clamp(0.0, 1.0);
+                overall_confidence = (0.5 * trend_confidence + 0.5 * agreement).clamp(0.0, 1.0);
             }
 
             all_verdicts.extend(verdicts);
@@ -228,52 +358,6 @@ impl DetectionEngine {
             // Step 3: Update the window AFTER detection (so the current
             // value doesn't influence its own baseline).
             window.push(sample.value);
-        }
-
-        // Step 3.5: Run linear regression trend projection for predictive time-to-impact estimation.
-        let mut min_time_to_impact: Option<u64> = None;
-        let mut predicted_breach_metric: Option<String> = None;
-
-        for sample in &samples {
-            if let Some(window) = self.windows.get(&sample.key) {
-                let vals = window.values();
-                if vals.len() >= 10 {
-                    let n = 10;
-                    let last_10 = &vals[vals.len() - n..];
-                    
-                    let sum_x: f64 = 45.0;
-                    let sum_y: f64 = last_10.iter().sum();
-                    let sum_xy: f64 = last_10.iter().enumerate().map(|(i, &y)| i as f64 * y).sum();
-                    let denominator = 825.0;
-                    let slope = (10.0 * sum_xy - sum_x * sum_y) / denominator;
-
-                    let (threshold, metric_label) = match sample.key.metric_name.as_str() {
-                        "latency_us" => (15000.0, "Path Latency"),
-                        "packet_loss_pct" => (10.0, "Packet Loss"),
-                        "utilization_pct" => (85.0, "Link Utilization"),
-                        "crc_errors" => (100.0, "CRC Errors"),
-                        "in_errors" => (50.0, "Inbound Interface Errors"),
-                        "out_errors" => (50.0, "Outbound Interface Errors"),
-                        "affected_prefixes" => (500.0, "BGP Prefix Count"),
-                        "reroute_count" => (10.0, "Active LSP Reroutes"),
-                        "lsa_count" => (200.0, "OSPF LSA Flood"),
-                        _ => (100.0, "Metric"),
-                    };
-
-                    let curr_val = sample.value;
-                    if slope > 1e-5 && curr_val < threshold {
-                        let distance = threshold - curr_val;
-                        let intervals = distance / slope;
-                        let est_secs = intervals.round() as u64;
-                        if est_secs > 0 && est_secs < 300 {
-                            if min_time_to_impact.map_or(true, |t| est_secs < t) {
-                                min_time_to_impact = Some(est_secs);
-                                predicted_breach_metric = Some(metric_label.to_string());
-                            }
-                        }
-                    }
-                }
-            }
         }
 
         // Step 4: Build the final report.
@@ -298,7 +382,9 @@ impl DetectionEngine {
             verdicts: all_verdicts,
             explanation,
             recommendations,
-            time_to_impact_secs: min_time_to_impact,
+            time_to_impact_secs: min_time_to_impact_secs,
+            time_to_impact_minutes: min_time_to_impact_mins,
+            trend_score: max_trend_score,
             predicted_breach_metric,
         }
     }
@@ -447,6 +533,32 @@ impl DetectionEngine {
     pub fn config(&self) -> &DetectionEngineConfig {
         &self.config
     }
+}
+
+/// Computes Double Exponential Smoothing (Holt's Linear Trend) over a slice of observations.
+/// Returns the estimated level, trend, and the forecasted value at step `m`.
+fn calculate_holt_trend(
+    values: &[f64],
+    alpha: f64,
+    beta: f64,
+    m: usize,
+) -> Option<(f64, f64, f64)> {
+    let n = values.len();
+    if n < 2 {
+        return None;
+    }
+
+    let mut level = values[0];
+    let mut trend = values[1] - values[0];
+
+    for &val in values.iter().skip(1) {
+        let prev_level = level;
+        level = alpha * val + (1.0 - alpha) * (level + trend);
+        trend = beta * (level - prev_level) + (1.0 - beta) * trend;
+    }
+
+    let forecast = level + (m as f64) * trend;
+    Some((level, trend, forecast))
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────────

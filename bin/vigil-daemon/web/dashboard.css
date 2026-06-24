@@ -1102,3 +1102,12 @@ body {
     width: 100% !important;
     height: 100% !important;
 }
+
+/* Expand AI Copilot HUD to full width */
+.main-split.copilot-expanded {
+    grid-template-columns: 1fr !important;
+}
+
+.main-split.copilot-expanded > .console-box:first-child {
+    display: none !important;
+}

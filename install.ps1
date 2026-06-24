@@ -47,12 +47,22 @@ if (!(Test-Path $modelDir)) {
 }
 
 $ggufFiles = Get-ChildItem -Path $modelDir -Filter "*.gguf"
+$validGgufFiles = @()
 if ($ggufFiles) {
     Write-Host "[+] GGUF model(s) already present:" -ForegroundColor Green
     foreach ($f in $ggufFiles) {
-        Write-Host "    - $($f.Name)" -ForegroundColor Green
+        if ($f.Length -gt 100MB) {
+            $humanSize = [Math]::Round($f.Length / 1GB, 2)
+            Write-Host "    - $($f.Name) ($humanSize GB)" -ForegroundColor Green
+            $validGgufFiles += $f
+        } else {
+            $humanSize = [Math]::Round($f.Length / 1KB, 2)
+            Write-Host "    - $($f.Name) ($humanSize KB) [corrupt/empty]" -ForegroundColor Red
+        }
     }
-    $FoundGguf = $ggufFiles[0].FullName
+    if ($validGgufFiles) {
+        $FoundGguf = $validGgufFiles[0].FullName
+    }
 }
 
 Write-Host "`nSTEP 2 / 4 - AI Backend Selection" -ForegroundColor Yellow
@@ -147,27 +157,65 @@ switch ($choice) {
 # If the chosen model is a GGUF file, ensure we have the llama-cli runner.
 $LLM_BIN_PATH_TOML = ""
 if ($ChosenModelPath -like "*.gguf") {
+    $candidates = @(
+        "PATH:llama-cli",
+        ".\bin\llama-bin\build\bin\llama-cli.exe",
+        ".\bin\llama-bin\build\bin\main.exe",
+        ".\bin\llama-bin\bin\llama-cli.exe",
+        ".\bin\llama-bin\llama-cli.exe",
+        ".\bin\llama-bin\main.exe"
+    )
+
     if ($env:VIGIL_LLM_BIN -and (Test-Path $env:VIGIL_LLM_BIN)) {
         $LLM_BIN_PATH_TOML = $env:VIGIL_LLM_BIN.Replace("\", "/")
         Write-Host "[+] Using custom llama-cli from env VIGIL_LLM_BIN: $LLM_BIN_PATH_TOML" -ForegroundColor Green
-    } elseif (!(Get-Command llama-cli -ErrorAction SilentlyContinue) -and !(Test-Path ".\bin\llama-bin\llama-cli.exe") -and !(Test-Path ".\bin\llama-bin\bin\llama-cli.exe")) {
-        Write-Host "[*] llama-cli not found in PATH or bin folder. Downloading pre-compiled llama.cpp for Windows..." -ForegroundColor Cyan
-        if (!(Test-Path ".\bin")) { New-Item -ItemType Directory -Force -Path ".\bin" | Out-Null }
-        $llamaZip = ".\bin\llama-bin.zip"
-        Invoke-WebRequest -Uri "https://github.com/ggerganov/llama.cpp/releases/download/b3130/llama-b3130-bin-win-avx2-x64.zip" -OutFile $llamaZip
-        Expand-Archive -Path $llamaZip -DestinationPath ".\bin\llama-bin" -Force
-        Remove-Item $llamaZip -Force
-        
-        if (Test-Path ".\bin\llama-bin\bin\llama-cli.exe") {
-            $LLM_BIN_PATH_TOML = "./bin/llama-bin/bin/llama-cli.exe"
-        } else {
-            $LLM_BIN_PATH_TOML = "./bin/llama-bin/llama-cli.exe"
+    } else {
+        $foundCandidate = $null
+        foreach ($c in $candidates) {
+            if ($c -eq "PATH:llama-cli") {
+                if (Get-Command llama-cli -ErrorAction SilentlyContinue) {
+                    $foundCandidate = "llama-cli"
+                    break
+                }
+            } elseif (Test-Path $c) {
+                $foundCandidate = $c
+                break
+            }
         }
-        Write-Host "[+] Extracted llama-cli to $LLM_BIN_PATH_TOML" -ForegroundColor Green
-    } elseif (Test-Path ".\bin\llama-bin\bin\llama-cli.exe") {
-        $LLM_BIN_PATH_TOML = "./bin/llama-bin/bin/llama-cli.exe"
-    } elseif (Test-Path ".\bin\llama-bin\llama-cli.exe") {
-        $LLM_BIN_PATH_TOML = "./bin/llama-bin/llama-cli.exe"
+
+        if (!$foundCandidate) {
+            Write-Host "[*] llama-cli not found in PATH or bin folder. Downloading pre-compiled llama.cpp for Windows..." -ForegroundColor Cyan
+            if (!(Test-Path ".\bin")) { New-Item -ItemType Directory -Force -Path ".\bin" | Out-Null }
+            $llamaZip = ".\bin\llama-bin.zip"
+            try {
+                Invoke-WebRequest -Uri "https://github.com/ggerganov/llama.cpp/releases/download/b3130/llama-b3130-bin-win-avx2-x64.zip" -OutFile $llamaZip
+                Expand-Archive -Path $llamaZip -DestinationPath ".\bin\llama-bin" -Force
+                Remove-Item $llamaZip -Force
+            } catch {
+                Write-Host "[-] Failed to download or extract llama.cpp binary: $_" -ForegroundColor Red
+                exit 1
+            }
+
+            foreach ($c in $candidates) {
+                if ($c -ne "PATH:llama-cli" -and (Test-Path $c)) {
+                    $foundCandidate = $c
+                    break
+                }
+            }
+        }
+
+        if ($foundCandidate) {
+            if ($foundCandidate -eq "llama-cli") {
+                $LLM_BIN_PATH_TOML = "llama-cli"
+            } else {
+                $resolved = Resolve-Path $foundCandidate
+                $LLM_BIN_PATH_TOML = $resolved.ToString().Replace("\", "/")
+            }
+            Write-Host "[+] Using llama-cli runner: $LLM_BIN_PATH_TOML" -ForegroundColor Green
+        } else {
+            Write-Host "[-] Could not find llama-cli or main binary after download/extraction." -ForegroundColor Red
+            exit 1
+        }
     }
 }
 

@@ -83,14 +83,24 @@ fi
 
 # Scan for existing GGUF files
 mkdir -p ./models
+FOUND_GGUF=""
 GGUF_FILES=$(find ./models -maxdepth 1 -name "*.gguf" -type f 2>/dev/null || true)
 if [ -n "$GGUF_FILES" ]; then
     ok "GGUF model(s) already present in ./models/:"
     echo "$GGUF_FILES" | while read -r f; do
-        SIZE=$(du -h "$f" 2>/dev/null | awk '{print $1}')
-        echo -e "     ${GREEN}•${NC} $(basename "$f") ${DIM}(${SIZE})${NC}"
+        SIZE_BYTES=$(stat -c%s "$f" 2>/dev/null || stat -f%z "$f" 2>/dev/null || echo 0)
+        SIZE_HUMAN=$(du -h "$f" 2>/dev/null | awk '{print $1}')
+        if [ "$SIZE_BYTES" -gt 104857600 ]; then # > 100MB
+            echo -e "     ${GREEN}•${NC} $(basename "$f") ${DIM}(${SIZE_HUMAN})${NC}"
+            echo "$f" >> ./models/.detected_gguf_temp
+        else
+            echo -e "     ${RED}•${NC} $(basename "$f") ${DIM}(${SIZE_HUMAN}) [corrupt/empty]${NC}"
+        fi
     done
-    FOUND_GGUF=$(echo "$GGUF_FILES" | head -1)
+    if [ -f "./models/.detected_gguf_temp" ]; then
+        FOUND_GGUF=$(head -n 1 ./models/.detected_gguf_temp)
+        rm -f ./models/.detected_gguf_temp
+    fi
 fi
 
 echo ""
@@ -244,10 +254,15 @@ esac
 # If the chosen model is a GGUF file, ensure we have the llama-cli runner.
 LLM_BIN_PATH_TOML=""
 if [[ "$CHOSEN_MODEL_PATH" == *.gguf ]]; then
-    if [ -n "$VIGIL_LLM_BIN" ] && [ -f "$VIGIL_LLM_BIN" ]; then
-        LLM_BIN_PATH_TOML="$VIGIL_LLM_BIN"
+    if [ -n "${VIGIL_LLM_BIN:-}" ] && [ -f "${VIGIL_LLM_BIN:-}" ]; then
+        LLM_BIN_PATH_TOML="${VIGIL_LLM_BIN:-}"
         ok "Using custom llama-cli from env VIGIL_LLM_BIN: $LLM_BIN_PATH_TOML"
-    elif ! command -v llama-cli >/dev/null 2>&1 && [ ! -f "./bin/llama-bin/llama-cli" ] && [ ! -f "./bin/llama-bin/bin/llama-cli" ]; then
+    elif ! command -v llama-cli >/dev/null 2>&1 && \
+         [ ! -f "./bin/llama-bin/build/bin/llama-cli" ] && \
+         [ ! -f "./bin/llama-bin/build/bin/main" ] && \
+         [ ! -f "./bin/llama-bin/bin/llama-cli" ] && \
+         [ ! -f "./bin/llama-bin/llama-cli" ] && \
+         [ ! -f "./bin/llama-bin/main" ]; then
         info "llama-cli not found in PATH or bin folder. Downloading pre-compiled llama.cpp for Linux..."
         mkdir -p ./bin
         LLAMA_ZIP="./bin/llama-zip.zip"
@@ -261,21 +276,32 @@ if [[ "$CHOSEN_MODEL_PATH" == *.gguf ]]; then
             unzip -q -o "$LLAMA_ZIP" -d ./bin/llama-bin
             rm -f "$LLAMA_ZIP"
             
-            if [ -f "./bin/llama-bin/bin/llama-cli" ]; then
-                chmod +x ./bin/llama-bin/bin/llama-cli
-                LLM_BIN_PATH_TOML="./bin/llama-bin/bin/llama-cli"
+            FOUND_BIN=""
+            for candidate in "./bin/llama-bin/build/bin/llama-cli" "./bin/llama-bin/build/bin/main" "./bin/llama-bin/bin/llama-cli" "./bin/llama-bin/llama-cli" "./bin/llama-bin/main"; do
+                if [ -f "$candidate" ]; then
+                    FOUND_BIN="$candidate"
+                    break
+                fi
+            done
+
+            if [ -n "$FOUND_BIN" ]; then
+                chmod +x "$FOUND_BIN"
+                LLM_BIN_PATH_TOML="$FOUND_BIN"
+                ok "Extracted llama-cli runner to $LLM_BIN_PATH_TOML"
             else
-                chmod +x ./bin/llama-bin/llama-cli
-                LLM_BIN_PATH_TOML="./bin/llama-bin/llama-cli"
+                fail "Could not find llama-cli or main binary in the extracted archive."
+                exit 1
             fi
-            ok "Extracted llama-cli to $LLM_BIN_PATH_TOML"
         else
             warn "unzip is not installed. Skipping automatic extraction of llama-cli."
         fi
-    elif [ -f "./bin/llama-bin/bin/llama-cli" ]; then
-        LLM_BIN_PATH_TOML="./bin/llama-bin/bin/llama-cli"
-    elif [ -f "./bin/llama-bin/llama-cli" ]; then
-        LLM_BIN_PATH_TOML="./bin/llama-bin/llama-cli"
+    else
+        for candidate in "./bin/llama-bin/build/bin/llama-cli" "./bin/llama-bin/build/bin/main" "./bin/llama-bin/bin/llama-cli" "./bin/llama-bin/llama-cli" "./bin/llama-bin/main"; do
+            if [ -f "$candidate" ]; then
+                LLM_BIN_PATH_TOML="$candidate"
+                break
+            fi
+        done
     fi
 fi
 
