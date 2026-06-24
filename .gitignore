@@ -29,3 +29,13 @@ models/*.gguf
 # Downloaded binaries & zip archives
 /bin/llama-bin/
 /bin/llama-zip.zip
+*.zip
+*.tar.gz
+*.tgz
+*.gz
+*.exe
+
+# Databases & local state
+*.db
+*.sqlite
+models/*.model
