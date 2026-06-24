@@ -263,7 +263,7 @@ if [[ "$CHOSEN_MODEL_PATH" == *.gguf ]]; then
          [ ! -f "./bin/llama-bin/bin/llama-cli" ] && \
          [ ! -f "./bin/llama-bin/llama-cli" ] && \
          [ ! -f "./bin/llama-bin/main" ]; then
-        info "llama-cli not found in PATH or bin folder. Downloading pre-compiled llama.cpp for Linux..."
+        info "llama-cli runner not found in PATH or bin folder. Downloading pre-compiled llama.cpp runner tools (~10 MB — NOT the large model file)..."
         mkdir -p ./bin
         LLAMA_ZIP="./bin/llama-zip.zip"
         if command -v curl >/dev/null; then
