@@ -270,10 +270,13 @@ impl LlmCopilot {
             .arg("--temp")
             .arg(self.config.temperature.to_string())
             .arg("-t")
-            .arg(self.config.n_threads.to_string())
-            .arg("-ngl")
-            .arg(gpu_layers.to_string())
-            .arg("--log-disable"); // keep stderr clean
+            .arg(self.config.n_threads.to_string());
+
+        if gpu_layers > 0 {
+            cmd.arg("-ngl").arg(gpu_layers.to_string());
+        }
+
+        cmd.arg("--log-disable"); // keep stderr clean
 
         let output = cmd.output().await.map_err(|e| VigilError::LlmError {
             reason: format!("Failed to spawn llama-cli: {}", e),
@@ -281,8 +284,14 @@ impl LlmCopilot {
 
         if !output.status.success() {
             let err_msg = String::from_utf8_lossy(&output.stderr);
+            let out_msg = String::from_utf8_lossy(&output.stdout);
             return Err(VigilError::LlmError {
-                reason: format!("llama-cli exited with error: {}", err_msg.trim()),
+                reason: format!(
+                    "llama-cli exited with error code {}. Stderr: {}. Stdout: {}",
+                    output.status,
+                    err_msg.trim(),
+                    out_msg.trim()
+                ),
             });
         }
 
